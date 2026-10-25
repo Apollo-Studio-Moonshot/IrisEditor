@@ -1,181 +1,204 @@
+import AppKit
 import SwiftUI
 
+/// Floating find / replace / go-to-line bar.
+///
+/// The controls live on top of a real `NSGlassEffectView`; on macOS 27 the glass is
+/// created with `effectIsInteractive` so it responds to pointer interaction.
 struct FindReplacePanel: View {
     @EnvironmentObject private var appState: AppState
-    @State private var showReplace = false
-    @State private var goToLineInput = ""
-    
+    @StateObject private var model = FindPanelModel()
+    @FocusState private var focus: Field?
+
+    private enum Field: Hashable {
+        case find
+        case replace
+        case line
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Find/Replace or Go To Line selector
-            Picker("", selection: $showReplace) {
-                Text("Find").tag(false)
-                Text("Replace").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            
+        VStack(spacing: 8) {
             if appState.showGoToLine {
-                goToLineSection
+                goToLineRow
             } else {
-                findSection
-                if showReplace {
-                    replaceSection
+                findRow
+                if model.showsReplaceField {
+                    replaceRow
                 }
             }
         }
-        .padding(.bottom, 12)
-        .frame(width: 440)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 8)
-        )
-        .padding(.top, 60)
-        .onDisappear {
-            NotificationCenter.default.post(
-                name: .findHighlight,
-                object: nil,
-                userInfo: ["ranges": []]
-            )
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(width: 470)
+        .background {
+            GlassBackdrop(style: .regular, cornerRadius: 16, interactive: true)
+        }
+        .shadow(color: .black.opacity(0.22), radius: 18, y: 8)
+        .onExitCommand {
+            appState.closeFindPanel()
+        }
+        .onAppear {
+            syncFocus()
+        }
+        .onChange(of: appState.showGoToLine) { _, _ in
+            syncFocus()
+        }
+        .onChange(of: model.showsReplaceField) { _, showsReplace in
+            if showsReplace {
+                focus = .replace
+            }
         }
     }
-    
-    private var findSection: some View {
+
+    // MARK: - Find & replace
+
+    private var findRow: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(.tertiary)
-                .frame(width: 20)
-            
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
             TextField("Find", text: $appState.findText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .padding(.vertical, 6)
-                .padding(.horizontal, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.white.opacity(0.08))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                )
-            
-            Text("\(appState.findMatches.count) matches")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.tertiary)
+                .textFieldStyle(.roundedBorder)
+                .focused($focus, equals: .find)
+                .onSubmit {
+                    appState.performFind(forward: true)
+                }
+
+            Text(matchSummary)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
                 .monospacedDigit()
-            
+                .frame(minWidth: 68, alignment: .leading)
+
             Button {
                 appState.performFind(forward: false)
             } label: {
                 Image(systemName: "chevron.up")
-                    .font(.system(size: 11, weight: .bold))
             }
-            .buttonStyle(.glass)
-            
+            .buttonStyle(.borderless)
+            .disabled(appState.findMatches.isEmpty)
+            .help("Previous Match")
+
             Button {
                 appState.performFind(forward: true)
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 11, weight: .bold))
             }
-            .buttonStyle(.glass)
-            
+            .buttonStyle(.borderless)
+            .disabled(appState.findMatches.isEmpty)
+            .help("Next Match")
+
             Button {
-                appState.showFindReplace = false
-                appState.showGoToLine = false
+                model.showsReplaceField.toggle()
             } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
+                Image(systemName: "arrow.triangle.2.circlepath")
             }
-            .buttonStyle(.glass)
+            .buttonStyle(.borderless)
+            .help(model.showsReplaceField ? "Hide Replace" : "Show Replace")
+
+            closeButton
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
     }
-    
-    private var replaceSection: some View {
+
+    private var replaceRow: some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.triangle.2.circlepath")
-                .foregroundStyle(.tertiary)
-                .frame(width: 20)
-            
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
             TextField("Replace with", text: $appState.replaceText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .padding(.vertical, 6)
-                .padding(.horizontal, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.white.opacity(0.08))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                )
-            
+                .textFieldStyle(.roundedBorder)
+                .focused($focus, equals: .replace)
+                .onSubmit {
+                    appState.replaceCurrentMatch()
+                }
+
             Button("Replace") {
-                appState.replaceCurrent()
+                appState.replaceCurrentMatch()
             }
-            .buttonStyle(.glass)
-            .font(.system(size: 12, weight: .medium))
-            
+            .disabled(appState.findMatchIndex < 0)
+
             Button("All") {
-                appState.replaceAll()
+                appState.replaceAllMatches()
             }
-            .buttonStyle(.glass)
-            .font(.system(size: 12, weight: .medium))
+            .disabled(appState.findMatches.isEmpty)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
+        .padding(.leading, 24)
     }
-    
-    private var goToLineSection: some View {
+
+    private var matchSummary: String {
+        guard !appState.findText.isEmpty else { return "" }
+        if appState.findMatches.isEmpty { return "Not found" }
+        if appState.findMatchIndex >= 0 {
+            return "\(appState.findMatchIndex + 1) of \(appState.findMatches.count)"
+        }
+        return appState.findMatches.count == 1
+            ? "1 match"
+            : "\(appState.findMatches.count) matches"
+    }
+
+    // MARK: - Go to line
+
+    private var goToLineRow: some View {
         HStack(spacing: 8) {
             Image(systemName: "text.cursor")
-                .foregroundStyle(.tertiary)
-                .frame(width: 20)
-            
-            TextField("Go to line number", text: $goToLineInput)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .padding(.vertical, 6)
-                .padding(.horizontal, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.white.opacity(0.08))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                )
-            
-            Button("Go") {
-                if let line = Int(goToLineInput), line > 0 {
-                    appState.goToLine(line)
-                    appState.showGoToLine = false
-                }
-            }
-            .buttonStyle(.glassProminent)
-            .font(.system(size: 12, weight: .semibold))
-            
-            Button {
-                appState.showGoToLine = false
-                appState.showFindReplace = false
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-            }
-            .buttonStyle(.glass)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            TextField("Line number", text: $model.lineText)
+                .textFieldStyle(.roundedBorder)
+                .focused($focus, equals: .line)
+                .onSubmit(goToLine)
+
+            Text("of \(appState.document.lineCount)")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .frame(minWidth: 68, alignment: .leading)
+
+            Button("Go", action: goToLine)
+                .buttonStyle(.borderedProminent)
+                .disabled(lineNumber == nil)
+
+            closeButton
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
     }
+
+    private var closeButton: some View {
+        Button {
+            appState.closeFindPanel()
+        } label: {
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.borderless)
+        .keyboardShortcut(.cancelAction)
+        .help("Close")
+    }
+
+    // MARK: - Actions
+
+    private var lineNumber: Int? {
+        guard let line = Int(model.lineText.trimmingCharacters(in: .whitespaces)),
+              line > 0 else {
+            return nil
+        }
+        return line
+    }
+
+    private func goToLine() {
+        guard let line = lineNumber else { return }
+        appState.goToLine(line)
+    }
+
+    private func syncFocus() {
+        focus = appState.showGoToLine ? .line : .find
+    }
+}
+
+@MainActor
+final class FindPanelModel: ObservableObject {
+    @Published var showsReplaceField = false
+    @Published var lineText = ""
 }

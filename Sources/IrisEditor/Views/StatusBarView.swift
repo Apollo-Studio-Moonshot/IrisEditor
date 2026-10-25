@@ -1,65 +1,65 @@
 import SwiftUI
 
+/// Native status bar that sits below the editor and reads from the shared app state.
 struct StatusBarView: View {
     @EnvironmentObject private var appState: AppState
-    
-    var body: some View {
-        HStack(spacing: 16) {
-            // Document info
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(appState.document.isDirty ? Color.orange : Color.green)
-                    .frame(width: 6, height: 6)
-                Text(appState.document.displayName)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            
-            Divider()
-                .frame(height: 14)
-                .overlay(.white.opacity(0.15))
-            
-            // Line/Column (placeholder - actual values come from editor)
-            StatusItem(icon: "text.cursor", value: "Ln \(appState.document.lineCount)")
-            
-            Divider()
-                .frame(height: 14)
-                .overlay(.white.opacity(0.15))
-            
-            // Word count
-            StatusItem(icon: "character.book.closed", value: "\(appState.document.wordCount) words")
-            
-            Divider()
-                .frame(height: 14)
-                .overlay(.white.opacity(0.15))
-            
-            // Character count
-            StatusItem(icon: "info", value: "\(appState.document.characterCount) chars")
-            
-            Spacer()
-            
-            // File size
-            StatusItem(icon: "externaldrive", value: appState.document.fileSizeDescription)
-            
-            // Encoding
-            StatusItem(icon: "doc.plaintext", value: "UTF-8")
-        }
-        .padding(.horizontal, 14)
-    }
-}
 
-struct StatusItem: View {
-    let icon: String
-    let value: String
-    
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-            Text(value)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
+        HStack(spacing: 0) {
+            item("Ln \(appState.cursorLine), Col \(appState.cursorColumn)")
+            separator
+            item(lineCountText)
+            separator
+            item(wordCountText)
+            separator
+            item(characterCountText)
+
+            Spacer(minLength: 12)
+
+            if appState.document.isDirty {
+                item("Edited")
+                separator
+            }
+            item(appState.document.fileSizeDescription)
+            separator
+            item("UTF-8")
         }
+        .font(.system(size: 11))
+        .monospacedDigit()
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .padding(.horizontal, 16)
+        .frame(height: 24)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+
+    private var lineCountText: String {
+        let count = appState.document.lineCount
+        return count == 1 ? "1 line" : "\(count) lines"
+    }
+
+    private var wordCountText: String {
+        let count = appState.document.wordCount
+        return count == 1 ? "1 word" : "\(count) words"
+    }
+
+    private var characterCountText: String {
+        let count = appState.document.characterCount
+        return count == 1 ? "1 character" : "\(count) characters"
+    }
+
+    private var separator: some View {
+        Text("·")
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 8)
+    }
+
+    private func item(_ text: String) -> some View {
+        Text(text)
+            .foregroundStyle(.secondary)
     }
 }

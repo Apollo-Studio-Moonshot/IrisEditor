@@ -1,82 +1,174 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var appState: AppState
-    
+
     var body: some View {
         ZStack {
-            // Animated gradient background for Liquid Glass effect
-            BackgroundGradient()
+            VisualEffectBackground()
                 .ignoresSafeArea()
-            
+
             VStack(spacing: 0) {
-                ToolbarBar()
-                    .background(.regularMaterial)
-                
-                EditorContainer()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                
+                if appState.showFindReplace || appState.showGoToLine {
+                    FindReplacePanel()
+                        .padding(.top, 10)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                if !appState.showPreview {
+                    markdownToolbar
+                        .transition(.opacity)
+                }
+
+                editorCard
                 StatusBarView()
-                    .background(.thinMaterial)
-                    .frame(height: 28)
-            }
-            
-            // Floating Find/Replace / Go-to-Line Panel
-            if appState.showFindReplace || appState.showGoToLine {
-                FindReplacePanel()
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(100)
             }
         }
-    }
-}
-
-// MARK: - Background
-
-struct BackgroundGradient: View {
-    @State private var animate = false
-    
-    var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.15, green: 0.18, blue: 0.25),
-                    Color(red: 0.10, green: 0.12, blue: 0.18)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+        .background(
+            WindowConfigurator(
+                displayName: appState.document.displayName,
+                fileURL: appState.document.fileURL,
+                isDirty: appState.document.isDirty
             )
-            
-            // Animated orbs for depth
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [Color.blue.opacity(0.15), .clear],
-                        center: .center,
-                        startRadius: 0,
-                        endRadius: 400
-                    )
-                )
-                .frame(width: 600, height: 600)
-                .offset(x: animate ? 150 : -150, y: animate ? -100 : 100)
-                .blur(radius: 40)
-                .animation(.easeInOut(duration: 8).repeatForever(autoreverses: true), value: animate)
-            
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [Color.purple.opacity(0.12), .clear],
-                        center: .center,
-                        startRadius: 0,
-                        endRadius: 350
-                    )
-                )
-                .frame(width: 500, height: 500)
-                .offset(x: animate ? -120 : 120, y: animate ? 80 : -80)
-                .blur(radius: 40)
-                .animation(.easeInOut(duration: 10).repeatForever(autoreverses: true), value: animate)
+        )
+        .navigationTitle(appState.document.displayName)
+        .navigationSubtitle(appState.document.fileURL?.deletingLastPathComponent().path ?? "")
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    appState.newDocument()
+                } label: {
+                    Label("New", systemImage: "square.and.pencil")
+                }
+                .help("New Document (⌘N)")
+
+                Button {
+                    appState.openDocument()
+                } label: {
+                    Label("Open", systemImage: "folder")
+                }
+                .help("Open… (⌘O)")
+
+                Button {
+                    appState.saveDocument()
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .help("Save (⌘S)")
+            }
+
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    appState.showFindReplace.toggle()
+                } label: {
+                    Label("Find", systemImage: "magnifyingglass")
+                }
+                .help("Find & Replace (⌘F)")
+
+                Button {
+                    appState.showGoToLine.toggle()
+                } label: {
+                    Label("Go to Line", systemImage: "arrow.up.arrow.down")
+                }
+                .help("Go to Line (⌘G)")
+
+                Button {
+                    appState.showPreview.toggle()
+                } label: {
+                    Label("Preview", systemImage: appState.showPreview ? "text.alignleft" : "doc.richtext")
+                }
+                .help(appState.showPreview ? "Edit Markdown" : "Preview Markdown")
+            }
+
+            ToolbarItem(placement: .primaryAction) {
+                SettingsLink {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .help("Settings (⌘,)")
+            }
         }
-        .onAppear { animate = true }
+        .animation(.snappy(duration: 0.22), value: appState.showFindReplace)
+        .animation(.snappy(duration: 0.22), value: appState.showGoToLine)
+        .animation(.snappy(duration: 0.22), value: appState.showPreview)
+    }
+
+    private var editorCard: some View {
+        ZStack {
+            GlassBackdrop(style: .regular, cornerRadius: 14, interactive: true)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if appState.showPreview {
+                MarkdownPreviewView(markdown: appState.document.text)
+                    .clipShape(.rect(cornerRadius: 13))
+            } else {
+                TextEditorViewRepresentable(
+                    text: Binding(
+                        get: { appState.document.text },
+                        set: { newValue in
+                            guard appState.document.text != newValue else { return }
+                            appState.document.text = newValue
+                            appState.document.isDirty = true
+                        }
+                    ),
+                    settings: appState.settings
+                )
+                .padding(1)
+                .clipShape(.rect(cornerRadius: 13))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .clipShape(.rect(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.7), lineWidth: 0.5)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+    }
+
+    private var markdownToolbar: some View {
+        HStack(spacing: 8) {
+            formatButton("H1", prefix: "# ", help: "Heading 1")
+            formatButton("B", prefix: "**", help: "Bold")
+            formatButton("I", prefix: "*", help: "Italic")
+            formatButton("`", prefix: "`", help: "Inline Code")
+            formatButton("S", prefix: "~~", help: "Strikethrough")
+
+            Divider()
+                .frame(height: 16)
+
+            Button {
+                appState.toggleMarkdownFormat(prefix: "- ")
+            } label: {
+                Image(systemName: "list.bullet")
+            }
+            .help("Bulleted List")
+
+            Button {
+                appState.toggleMarkdownFormat(prefix: "> ")
+            } label: {
+                Image(systemName: "text.quote")
+            }
+            .help("Block Quote")
+
+            Spacer()
+        }
+        .buttonStyle(.borderless)
+        .font(.system(size: 12))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+    }
+
+    private func formatButton(_ title: String, prefix: String, help: String) -> some View {
+        Button {
+            appState.toggleMarkdownFormat(prefix: prefix)
+        } label: {
+            Text(title)
+                .fontWeight(.semibold)
+                .frame(minWidth: 20, minHeight: 20)
+        }
+        .help(help)
     }
 }
