@@ -51,7 +51,6 @@ struct WindowConfigurator: NSViewRepresentable {
         window.styleMask.insert(.fullSizeContentView)
         window.isOpaque = false
         window.backgroundColor = .clear
-        window.appearance = NSAppearance(named: .aqua)
         window.isMovableByWindowBackground = true
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.contentView?.wantsLayer = true

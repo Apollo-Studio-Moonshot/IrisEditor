@@ -58,7 +58,7 @@ struct IrisEditorApp: App {
                 Button("Zoom In") {
                     appState.zoomIn()
                 }
-                .keyboardShortcut("+", modifiers: .command)
+                .keyboardShortcut("=", modifiers: .command)
 
                 Button("Zoom Out") {
                     appState.zoomOut()
@@ -125,7 +125,6 @@ struct IrisEditorApp: App {
                 Button("Load GPT-2 Model… (Coming Soon)") {
                     GPT2UnavailableAlert.present()
                 }
-                .disabled(true)
 
                 Divider()
 

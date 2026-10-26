@@ -483,64 +483,23 @@ final class IrisTextView: NSTextView {
     }
 
     /// Wraps the current selection with Markdown markers, or un-wraps if already wrapped.
+    /// Delegates all marker/word logic to `MarkdownFormatting`, which is grapheme-safe.
     private func toggleMarkdownFormat(prefix: String, suffix: String) {
-        let ns = string as NSString
-        var range = selectedRange()
-
-        // Expand an empty selection to the current word for convenience.
-        if range.length == 0 {
-            range = wordRangeAtCursor()
+        guard let result = MarkdownFormatting.toggle(
+            text: string,
+            selection: selectedRange(),
+            prefix: prefix,
+            suffix: suffix
+        ) else {
+            return
         }
 
-        guard range.length > 0, NSMaxRange(range) <= ns.length else { return }
-
-        let selected = ns.substring(with: range)
-        let alreadyWrapped = selected.hasPrefix(prefix) && selected.hasSuffix(suffix)
-
-        let replacement: String
-        let newSelection: NSRange
-
-        if alreadyWrapped {
-            let innerStart = prefix.count
-            let innerEnd = selected.count - suffix.count
-            guard innerEnd >= innerStart else { return }
-            let inner = (selected as NSString).substring(with: NSRange(location: innerStart, length: innerEnd - innerStart))
-            replacement = inner
-            newSelection = NSRange(location: range.location, length: inner.count)
-        } else {
-            replacement = prefix + selected + suffix
-            newSelection = NSRange(location: range.location, length: replacement.count)
-        }
-
-        shouldChangeText(in: range, replacementString: replacement)
-        textStorage?.replaceCharacters(in: range, with: replacement)
+        breakUndoCoalescing()
+        shouldChangeText(in: result.changedRange, replacementString: result.replacement)
+        textStorage?.replaceCharacters(in: result.changedRange, with: result.replacement)
         didChangeText()
-        setSelectedRange(newSelection)
-    }
-
-    private func wordRangeAtCursor() -> NSRange {
-        let ns = string as NSString
-        let location = min(selectedRange().location, ns.length)
-        guard location > 0 else {
-            return NSRange(location: 0, length: min(1, ns.length))
-        }
-
-        let charSet = CharacterSet.letters.union(.decimalDigits).union(CharacterSet(charactersIn: "_-"))
-        var start = location
-        while start > 0 {
-            let scalar = UnicodeScalar(Int(ns.character(at: start - 1)))!
-            if !charSet.contains(scalar) { break }
-            start -= 1
-        }
-
-        var end = location
-        while end < ns.length {
-            let scalar = UnicodeScalar(Int(ns.character(at: end)))!
-            if !charSet.contains(scalar) { break }
-            end += 1
-        }
-
-        return start == end ? NSRange(location: location, length: 0) : NSRange(location: start, length: end - start)
+        setSelectedRange(result.selection)
+        scrollRangeToVisible(result.selection)
     }
 
     // MARK: - Drawing

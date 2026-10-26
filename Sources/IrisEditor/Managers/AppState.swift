@@ -335,6 +335,9 @@ final class AppState: ObservableObject {
             findMatchIndex = matches.count - 1
         }
 
+        // The find bar owns the highlight layer while it is visible; when it is closed
+        // (or the go-to-line bar is showing instead), typing must not repaint stale matches.
+        guard showFindReplace else { return }
         postFindHighlight(scroll: false)
     }
 

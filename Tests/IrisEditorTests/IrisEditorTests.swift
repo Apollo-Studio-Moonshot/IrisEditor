@@ -128,3 +128,175 @@ struct EditorDocumentTests {
         #expect(document.characterCount == 2)
     }
 }
+
+struct MarkdownFormattingTests {
+    @Test func wrapsSelectionWithMarkers() {
+        let text = "hello world"
+        let result = MarkdownFormatting.toggle(
+            text: text,
+            selection: NSRange(location: 0, length: 5),
+            prefix: "**"
+        )
+        #expect(result?.text == "**hello** world")
+        #expect(result?.selection.length == (("*" as NSString).length * 4 + 5))
+    }
+
+    @Test func unwrapsAlreadyWrappedSelection() {
+        let text = "**hello** world"
+        let result = MarkdownFormatting.toggle(
+            text: text,
+            selection: NSRange(location: 0, length: 9),
+            prefix: "**"
+        )
+        #expect(result?.text == "hello world")
+    }
+
+    @Test func emojiSelectionSurvivesRoundTrip() {
+        // Regression: the old UTF-16 scalar scan crashed next to surrogate pairs
+        // and produced U+FFFD when unwrapping.
+        let wrapped = "**😀**"
+        let unwrapped = MarkdownFormatting.toggle(
+            text: wrapped,
+            selection: NSRange(location: 0, length: (wrapped as NSString).length),
+            prefix: "**"
+        )
+        #expect(unwrapped?.text == "😀")
+
+        let rewrapped = MarkdownFormatting.toggle(
+            text: "😀",
+            selection: NSRange(location: 0, length: 2),
+            prefix: "**"
+        )
+        #expect(rewrapped?.text == "**😀**")
+    }
+
+    @Test func emptySelectionExpandsToWord() {
+        let text = "hi 😀 café there"
+        let caret = (text as NSString).range(of: "café").location + 1
+        let result = MarkdownFormatting.toggle(
+            text: text,
+            selection: NSRange(location: caret, length: 0),
+            prefix: "**"
+        )
+        #expect(result?.text == "hi 😀 **café** there")
+    }
+
+    @Test func linePrefixMarkerTogglesOnLineStart() {
+        // Regression: the old symmetric wrap produced "Title# " for the "# " marker.
+        let wrapped = MarkdownFormatting.toggle(
+            text: "Title",
+            selection: NSRange(location: 0, length: 5),
+            prefix: "# "
+        )
+        #expect(wrapped?.text == "# Title")
+
+        let unwrapped = MarkdownFormatting.toggle(
+            text: "# Title",
+            selection: NSRange(location: 0, length: 2),
+            prefix: "# "
+        )
+        #expect(unwrapped?.text == "Title")
+    }
+
+    @Test func linePrefixTogglesEachLineInMultiLineSelection() {
+        let text = "alpha\nbeta\ngamma"
+        let wrapped = MarkdownFormatting.toggle(
+            text: text,
+            selection: NSRange(location: 0, length: (text as NSString).length),
+            prefix: "- "
+        )
+        #expect(wrapped?.text == "- alpha\n- beta\n- gamma")
+
+        let unwrapped = MarkdownFormatting.toggle(
+            text: wrapped?.text ?? "",
+            selection: wrapped?.selection ?? NSRange(location: 0, length: 0),
+            prefix: "- "
+        )
+        #expect(unwrapped?.text == text)
+    }
+
+    @Test func linePrefixSkipsBlankLines() {
+        let result = MarkdownFormatting.toggle(
+            text: "one\n\ntwo",
+            selection: NSRange(location: 0, length: 9),
+            prefix: "> "
+        )
+        #expect(result?.text == "> one\n\n> two")
+    }
+
+    @Test func invalidSelectionRangeReturnsNil() {
+        #expect(MarkdownFormatting.toggle(
+            text: "abc",
+            selection: NSRange(location: 5, length: 2),
+            prefix: "**"
+        ) == nil)
+    }
+}
+
+struct MarkdownBlockParserTests {
+    private func kinds(_ blocks: [MarkdownBlock]) -> [String] {
+        blocks.map { block in
+            switch block {
+            case .heading: return "heading"
+            case .paragraph: return "para"
+            case .blockQuote: return "quote"
+            case .codeBlock: return "code"
+            case .unorderedList: return "ul"
+            case .orderedList: return "ol"
+            case .thematicBreak: return "hr"
+            }
+        }
+    }
+
+    @Test func parsesFullDocument() {
+        let doc = """
+        # Title
+
+        Some **bold** text here.
+        - item one
+        - item two
+
+        1. first
+        2. second
+
+        > quoted line
+
+        ```swift
+        let x = 1
+        ```
+
+        ---
+
+        Trailing paragraph.
+        """
+        #expect(kinds(MarkdownBlockParser.parse(doc)) == ["heading", "para", "ul", "ol", "quote", "code", "hr", "para"])
+    }
+
+    @Test func codeBlockKeepsLanguageAndLines() {
+        let blocks = MarkdownBlockParser.parse("```swift\nlet x = 1\n```")
+        guard case .codeBlock(let language, let lines)? = blocks.first else {
+            Issue.record("expected a code block")
+            return
+        }
+        #expect(language == "swift")
+        #expect(lines == ["let x = 1"])
+    }
+
+    @Test func unclosedFenceStillRenders() {
+        let blocks = MarkdownBlockParser.parse("```\ncode")
+        #expect(kinds(blocks) == ["code"])
+    }
+
+    @Test func headingRequiresSpaceAfterHashes() {
+        #expect(kinds(MarkdownBlockParser.parse("##Title")) == ["para"])
+        #expect(kinds(MarkdownBlockParser.parse("## Title")) == ["heading"])
+    }
+
+    @Test func emptyTextHasNoBlocks() {
+        #expect(MarkdownBlockParser.parse("").isEmpty)
+    }
+
+    @Test func crlfLineEndingsParse() {
+        #expect(kinds(MarkdownBlockParser.parse("# A\r\ntext")) == ["heading", "para"])
+    }
+}

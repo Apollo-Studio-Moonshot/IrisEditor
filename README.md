@@ -15,7 +15,8 @@ Electron, no dependencies, and no project bloat.
   the editor card and find bar opt into `effectIsInteractive` for pointer-responsive glass
 - **Markdown-first**: new documents default to `.md`, open/save panels target Markdown,
   and the gutter/editor highlight headings, emphasis, links, lists, and fenced code
-- **Markdown preview** — a read-only rendered view (`AttributedString(markdown:)`)
+- **Markdown preview** — a read-only block-level renderer (headings, lists, quotes,
+  fenced code, rules, with inline styling via `AttributedString(markdown:)`)
   toggled from the toolbar or `⇧⌘P`
 - **Markdown formatting** — Bold (`⌘B`), Italic (`⌘I`), Inline Code (`⌘K`),
   Strikethrough, Heading, Bulleted List, and Block Quote via the *Format* menu or a
@@ -65,6 +66,10 @@ The built binary lands in `.build/debug/IrisEditor` (or `.build/release/IrisEdit
 swift test
 ```
 
+> Note: with Command Line Tools only (no full Xcode), the Swift Testing macro plugin is
+> not auto-discovered. Run tests with an explicit plugin path instead:
+> `swift test -Xswiftc -load-plugin-library -Xswiftc "$(xcode-select -p)/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib"`
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -75,7 +80,7 @@ swift test
 | `⇧⌘S` | Save As… |
 | `⌘F` | Find & Replace |
 | `⌘G` | Go to Line… |
-| `⌘+` / `⌘-` / `⌘0` | Zoom in / out / reset |
+| `⌘=` / `⌘-` / `⌘0` | Zoom in / out / reset |
 | `⌘,` | Settings |
 | `⌘B` | Bold |
 | `⌘I` | Italic |
@@ -94,6 +99,8 @@ IrisEditor/
 │   ├── Models/
 │   │   ├── EditorDocument.swift      # Text, file URL, dirty flag, Markdown-aware stats
 │   │   ├── EditorSettings.swift      # Codable settings + UserDefaults persistence
+│   │   ├── MarkdownBlocks.swift      # Block-level Markdown parser for the preview
+│   │   ├── MarkdownFormatting.swift  # Grapheme-safe wrap/unwrap + line-prefix formatting
 │   │   ├── MarkdownSupport.swift     # Markdown file types, plain-text stripping, syntax highlighter
 │   │   └── TextSearch.swift          # Pure search + line-index helpers (unit tested)
 │   └── Views/
@@ -144,7 +151,8 @@ formatting, find/replace, go-to-line, settings, and the status bar are functiona
 
 **Not yet implemented:** GPT-2 autocomplete. The original Python prototype used
 `transformers`/`torch`; running it in Swift would require converting the model to Core ML.
-The menu items exist but are disabled and surface an explanatory alert. See
+The *Load GPT-2 Model…* menu item surfaces an explanatory alert; *Trigger Autocomplete*
+remains disabled until the model ships. See
 [`docs/legacy-readme-pyqt5.md`](docs/legacy-readme-pyqt5.md) for the archived Python/PyQt5
 prototype notes.
 
