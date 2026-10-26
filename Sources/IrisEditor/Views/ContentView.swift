@@ -112,14 +112,20 @@ struct ContentView: View {
             case .source:
                 sourcePane
             case .preview:
-                MarkdownPreviewView(markdown: appState.document.text)
-                    .clipShape(.rect(cornerRadius: 13))
+                MarkdownPreviewView(
+                    markdown: appState.document.text,
+                    baseURL: previewBaseURL
+                )
+                .clipShape(.rect(cornerRadius: 13))
             case .split:
                 HSplitView {
                     sourcePane
                         .frame(minWidth: 280)
-                    MarkdownPreviewView(markdown: appState.document.text)
-                        .frame(minWidth: 280)
+                    MarkdownPreviewView(
+                        markdown: appState.document.text,
+                        baseURL: previewBaseURL
+                    )
+                    .frame(minWidth: 280)
                 }
                 .clipShape(.rect(cornerRadius: 13))
             }
@@ -132,6 +138,10 @@ struct ContentView: View {
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 8)
+    }
+
+    private var previewBaseURL: URL? {
+        appState.document.fileURL?.deletingLastPathComponent()
     }
 
     private var sourcePane: some View {

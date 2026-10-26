@@ -258,10 +258,10 @@ struct MarkdownBlockParserTests {
             case .paragraph: return "para"
             case .blockQuote: return "quote"
             case .codeBlock: return "code"
-            case .unorderedList: return "ul"
-            case .orderedList: return "ol"
+            case .list(let ordered, _, _): return ordered ? "ol" : "ul"
             case .table: return "table"
             case .thematicBreak: return "hr"
+            case .htmlBlock: return "html"
             }
         }
     }
@@ -374,5 +374,442 @@ struct MarkdownTableParserTests {
         #expect(table.rows[0] == ["1", "", ""])
         #expect(table.rows[1] == ["x", "y", "z"])
         #expect(table.nextIndex == lines.count)
+    }
+}
+
+struct MarkdownBasicSyntaxBlockTests {
+    @Test func setextHeadingsParse() {
+        let blocks = MarkdownBlockParser.parse("Heading 1\n=========\n\nHeading 2\n---------")
+
+        guard case .heading(let level1, let text1)? = blocks.first,
+              case .heading(let level2, let text2)? = blocks.last else {
+            Issue.record("expected two Setext headings")
+            return
+        }
+        #expect(level1 == 1)
+        #expect(text1 == "Heading 1")
+        #expect(level2 == 2)
+        #expect(text2 == "Heading 2")
+    }
+
+    @Test func atxHeadingDropsClosingHashes() {
+        let blocks = MarkdownBlockParser.parse("## Title ##")
+        guard case .heading(let level, let text)? = blocks.first else {
+            Issue.record("expected a heading")
+            return
+        }
+        #expect(level == 2)
+        #expect(text == "Title")
+    }
+
+    @Test func nestedBlockquotesParseRecursively() {
+        let blocks = MarkdownBlockParser.parse("> outer\n>\n>> inner")
+
+        guard case .blockQuote(let inner)? = blocks.first else {
+            Issue.record("expected a block quote")
+            return
+        }
+        #expect(inner.count == 2)
+        guard case .paragraph(let text)? = inner.first,
+              case .blockQuote(let nested)? = inner.last,
+              case .paragraph(let nestedText)? = nested.first else {
+            Issue.record("expected a nested block quote")
+            return
+        }
+        #expect(text == "outer")
+        #expect(nestedText == "inner")
+    }
+
+    @Test func blockquoteContainsOtherElements() {
+        let doc = """
+        > #### The quarterly results look great!
+        >
+        > - Revenue was off the chart.
+        > - Profits were higher than ever.
+        >
+        > *Everything* is going according to **plan**.
+        """
+        let blocks = MarkdownBlockParser.parse(doc)
+
+        guard case .blockQuote(let inner)? = blocks.first else {
+            Issue.record("expected a block quote")
+            return
+        }
+        let kinds = inner.map { block -> String in
+            switch block {
+            case .heading: return "heading"
+            case .list: return "list"
+            case .paragraph: return "para"
+            default: return "other"
+            }
+        }
+        #expect(kinds == ["heading", "list", "para"])
+    }
+
+    @Test func nestedUnorderedListsParse() {
+        let doc = """
+        - one
+          - inner a
+          - inner b
+        - two
+        """
+        let blocks = MarkdownBlockParser.parse(doc)
+
+        guard case .list(let ordered, _, let items)? = blocks.first else {
+            Issue.record("expected a list")
+            return
+        }
+        #expect(ordered == false)
+        #expect(items.count == 2)
+
+        guard case .paragraph(let text)? = items[0].blocks.first,
+              case .list(_, _, let nestedItems)? = items[0].blocks.last else {
+            Issue.record("expected a nested list")
+            return
+        }
+        #expect(text == "one")
+        #expect(nestedItems.count == 2)
+    }
+
+    @Test func listItemsHoldMultipleParagraphs() {
+        let doc = """
+        * This is the first list item.
+        * Here's the second list item.
+
+            I need to add another paragraph.
+
+        * And here's the third list item.
+        """
+        let blocks = MarkdownBlockParser.parse(doc)
+
+        guard case .list(_, _, let items)? = blocks.first else {
+            Issue.record("expected a list")
+            return
+        }
+        #expect(items.count == 3)
+        #expect(items[1].blocks.count == 2)
+    }
+
+    @Test func listItemsHoldQuotesAndCode() {
+        let doc = """
+        - item one
+
+            > quoted
+
+            ```
+            let x = 1
+            ```
+        """
+        let blocks = MarkdownBlockParser.parse(doc)
+
+        guard case .list(_, _, let items)? = blocks.first else {
+            Issue.record("expected a list")
+            return
+        }
+        #expect(items.count == 1)
+        let kinds = items[0].blocks.map { block -> String in
+            switch block {
+            case .paragraph: return "para"
+            case .blockQuote: return "quote"
+            case .codeBlock: return "code"
+            default: return "other"
+            }
+        }
+        #expect(kinds == ["para", "quote", "code"])
+    }
+
+    @Test func indentedCodeBlockParses() {
+        let blocks = MarkdownBlockParser.parse("    let x = 1\n    let y = 2")
+
+        guard case .codeBlock(let language, let lines)? = blocks.first else {
+            Issue.record("expected an indented code block")
+            return
+        }
+        #expect(language == nil)
+        #expect(lines == ["let x = 1", "let y = 2"])
+    }
+
+    @Test func tildeFenceKeepsLanguage() {
+        let blocks = MarkdownBlockParser.parse("~~~swift\nlet x = 1\n~~~")
+
+        guard case .codeBlock(let language, let lines)? = blocks.first else {
+            Issue.record("expected a fenced code block")
+            return
+        }
+        #expect(language == "swift")
+        #expect(lines == ["let x = 1"])
+    }
+
+    @Test func fourSpaceFenceIsIndentedCode() {
+        let blocks = MarkdownBlockParser.parse("    ```\n    code\n    ```")
+
+        guard case .codeBlock(let language, let lines)? = blocks.first else {
+            Issue.record("expected an indented code block")
+            return
+        }
+        #expect(language == nil)
+        #expect(lines == ["```", "code", "```"])
+    }
+
+    @Test func referenceDefinitionIsConsumed() {
+        let doc = """
+        [ref]: https://example.com "Example"
+
+        Use [ref] here.
+        """
+        let document = MarkdownBlockParser.parseDocument(doc)
+
+        #expect(document.references["ref"] == MarkdownLinkReference(
+            destination: "https://example.com",
+            title: "Example"
+        ))
+        #expect(document.blocks.count == 1)
+        guard case .paragraph(let text)? = document.blocks.first else {
+            Issue.record("expected a paragraph")
+            return
+        }
+        #expect(text == "Use [ref] here.")
+    }
+
+    @Test func orderedListKeepsStartNumber() {
+        let blocks = MarkdownBlockParser.parse("3. three\n4. four")
+
+        guard case .list(let ordered, let start, let items)? = blocks.first else {
+            Issue.record("expected an ordered list")
+            return
+        }
+        #expect(ordered)
+        #expect(start == 3)
+        #expect(items.count == 2)
+    }
+
+    @Test func orderedListAcceptsParenthesisDelimiter() {
+        let blocks = MarkdownBlockParser.parse("1) one\n2) two")
+
+        guard case .list(let ordered, _, let items)? = blocks.first else {
+            Issue.record("expected an ordered list")
+            return
+        }
+        #expect(ordered)
+        #expect(items.count == 2)
+    }
+
+    @Test func escapedNumberStartsListItem() {
+        let blocks = MarkdownBlockParser.parse("- 1968\\. A great year!\n- Second")
+
+        guard case .list(_, _, let items)? = blocks.first,
+              case .paragraph(let text)? = items[0].blocks.first else {
+            Issue.record("expected a list item")
+            return
+        }
+        #expect(items.count == 2)
+        #expect(text == "1968\\. A great year!")
+    }
+
+    @Test func htmlBlockParses() {
+        let blocks = MarkdownBlockParser.parse("<h1>Title</h1>\n<p>Body</p>")
+
+        guard case .htmlBlock(let lines)? = blocks.first else {
+            Issue.record("expected an HTML block")
+            return
+        }
+        #expect(lines == ["<h1>Title</h1>", "<p>Body</p>"])
+    }
+
+    @Test func paragraphPreservesHardBreakSpaces() {
+        let blocks = MarkdownBlockParser.parse("first line  \nsecond")
+
+        guard case .paragraph(let text)? = blocks.first else {
+            Issue.record("expected a paragraph")
+            return
+        }
+        #expect(text == "first line  \nsecond")
+    }
+
+    @Test func thematicBreakVariantsParse() {
+        let blocks = MarkdownBlockParser.parse("---\n\n***\n\n___")
+        #expect(blocks == [.thematicBreak, .thematicBreak, .thematicBreak])
+    }
+}
+
+struct MarkdownInlineParserTests {
+    private let parser = MarkdownInlineParser()
+
+    @Test func emphasisCombinationsParse() {
+        #expect(parser.parse("I just love **bold text**.") == [
+            .text("I just love "),
+            .strong([.text("bold text")]),
+            .text("."),
+        ])
+        #expect(parser.parse("This text is ***really important***.") == [
+            .text("This text is "),
+            .emphasis([.strong([.text("really important")])]),
+            .text("."),
+        ])
+        #expect(parser.parse("This text is **_really important_**.") == [
+            .text("This text is "),
+            .strong([.emphasis([.text("really important")])]),
+            .text("."),
+        ])
+        #expect(parser.parse("Love**is**bold") == [
+            .text("Love"),
+            .strong([.text("is")]),
+            .text("bold"),
+        ])
+        #expect(parser.parse("This is really***very***important") == [
+            .text("This is really"),
+            .emphasis([.strong([.text("very")])]),
+            .text("important"),
+        ])
+        #expect(parser.parse("A*cat*meow") == [
+            .text("A"),
+            .emphasis([.text("cat")]),
+            .text("meow"),
+        ])
+        #expect(parser.parse("__bold__ and _italic_") == [
+            .strong([.text("bold")]),
+            .text(" and "),
+            .emphasis([.text("italic")]),
+        ])
+    }
+
+    @Test func intrawordUnderscoresStayLiteral() {
+        #expect(parser.parse("A_cat_meow") == [.text("A_cat_meow")])
+        #expect(parser.parse("Love__is__bold") == [.text("Love__is__bold")])
+    }
+
+    @Test func codeSpansSupportVariableBackticks() {
+        #expect(parser.parse("`code` and ``a ` b``") == [
+            .code("code"),
+            .text(" and "),
+            .code("a ` b"),
+        ])
+    }
+
+    @Test func escapesProduceLiteralCharacters() {
+        #expect(parser.parse("\\*escaped\\* and 1968\\. great") == [
+            .text("*escaped* and 1968. great"),
+        ])
+    }
+
+    @Test func inlineLinksParseWithTitles() {
+        #expect(parser.parse("[text](https://x.com \"title\")") == [
+            .link(
+                destination: "https://x.com",
+                title: "title",
+                children: [.text("text")]
+            ),
+        ])
+    }
+
+    @Test func referenceLinksResolve() {
+        let references = [
+            "ref": MarkdownLinkReference(destination: "https://example.com", title: "Example"),
+            "ref2": MarkdownLinkReference(destination: "https://two.com", title: nil),
+        ]
+        let parser = MarkdownInlineParser(references: references)
+
+        let expected = MarkdownInline.link(
+            destination: "https://example.com",
+            title: "Example",
+            children: [.text("text")]
+        )
+        #expect(parser.parse("[text][ref]") == [expected])
+        #expect(parser.parse("[ref][]") == [
+            .link(
+                destination: "https://example.com",
+                title: "Example",
+                children: [.text("ref")]
+            ),
+        ])
+        #expect(parser.parse("[ref2]") == [
+            .link(
+                destination: "https://two.com",
+                title: nil,
+                children: [.text("ref2")]
+            ),
+        ])
+        #expect(parser.parse("[missing]") == [.text("[missing]")])
+    }
+
+    @Test func autolinksParse() {
+        #expect(parser.parse("<https://example.com>") == [
+            .link(
+                destination: "https://example.com",
+                title: nil,
+                children: [.text("https://example.com")]
+            ),
+        ])
+        #expect(parser.parse("<user@example.com>") == [
+            .link(
+                destination: "mailto:user@example.com",
+                title: nil,
+                children: [.text("user@example.com")]
+            ),
+        ])
+    }
+
+    @Test func imagesAndLinkedImagesParse() {
+        #expect(parser.parse("![alt](img.png \"Example\")") == [
+            .image(source: "img.png", alt: "alt", title: "Example"),
+        ])
+        #expect(parser.parse("[![alt](img.png)](https://x.com)") == [
+            .link(
+                destination: "https://x.com",
+                title: nil,
+                children: [.image(source: "img.png", alt: "alt", title: nil)]
+            ),
+        ])
+    }
+
+    @Test func lineBreaksParse() {
+        #expect(parser.parse("first line  \nsecond") == [
+            .text("first line"),
+            .hardBreak,
+            .text("second"),
+        ])
+        #expect(parser.parse("first line\\\nsecond") == [
+            .text("first line"),
+            .hardBreak,
+            .text("second"),
+        ])
+        #expect(parser.parse("first\nsecond") == [
+            .text("first"),
+            .softBreak,
+            .text("second"),
+        ])
+    }
+
+    @Test func inlineHTMLParses() {
+        #expect(parser.parse("<br>") == [.hardBreak])
+        #expect(parser.parse("<b>bold</b>") == [.strong([.text("bold")])])
+        #expect(parser.parse("<em>word</em>") == [.emphasis([.text("word")])])
+        #expect(parser.parse("<code>x</code>") == [.code("x")])
+        #expect(parser.parse("<del>gone</del>") == [.strikethrough([.text("gone")])])
+        #expect(parser.parse("<span>x</span>") == [
+            .html("<span>"),
+            .text("x"),
+            .html("</span>"),
+        ])
+        #expect(parser.parse("This **word** is bold. This <em>word</em> is italic.") == [
+            .text("This "),
+            .strong([.text("word")]),
+            .text(" is bold. This "),
+            .emphasis([.text("word")]),
+            .text(" is italic."),
+        ])
+    }
+
+    @Test func strikethroughParses() {
+        #expect(parser.parse("~~strike~~") == [.strikethrough([.text("strike")])])
+    }
+
+    @Test func plainTextFlattensMarkup() {
+        let inlines: [MarkdownInline] = [
+            .emphasis([.text("a")]),
+            .softBreak,
+            .text("b"),
+        ]
+        #expect(inlines.plainText == "a b")
     }
 }

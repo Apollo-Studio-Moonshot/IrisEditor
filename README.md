@@ -15,9 +15,12 @@ Electron, no dependencies, and no project bloat.
   the editor card and find bar opt into `effectIsInteractive` for pointer-responsive glass
 - **Markdown-first**: new documents default to `.md`, open/save panels target Markdown,
   and the gutter/editor highlight headings, emphasis, links, lists, and fenced code
-- **Markdown preview** — a read-only block-level renderer (headings, lists, quotes,
-  fenced code, pipe **tables**, rules, with inline styling via `AttributedString(markdown:)`)
-  cycling through *source → split → preview* from the toolbar or `⇧⌘P`
+- **Markdown preview** — a native renderer for the full Markdown Guide basic syntax:
+  ATX and Setext headings, hard/soft line breaks, all emphasis combinations, nested
+  block quotes, nested ordered/unordered lists with paragraphs/quotes/code, inline and
+  indented/fenced code, rules, inline/reference/autolink links, images (local and remote),
+  escaping, inline HTML, HTML blocks, pipe **tables**, and nesting anywhere — cycling
+  through *source → split → preview* from the toolbar or `⇧⌘P`
 - **Editor tabs** — multiple documents open as tabs in one window: `⌘N` opens a new tab,
   `⌥⌘W` closes the current tab (prompting to save), `⇧⌘[` / `⇧⌘]` cycle tabs, and
   opening a file already shown focuses its existing tab
@@ -105,7 +108,8 @@ IrisEditor/
 │   ├── Models/
 │   │   ├── EditorDocument.swift      # Text, file URL, dirty flag, Markdown-aware stats
 │   │   ├── EditorSettings.swift      # Codable settings + UserDefaults persistence
-│   │   ├── MarkdownBlocks.swift      # Block-level Markdown parser for the preview
+│   │   ├── MarkdownBlocks.swift      # Recursive block parser for the preview
+│   │   ├── MarkdownInline.swift      # Inline parser (emphasis, code, links, images, escapes, HTML)
 │   │   ├── MarkdownFormatting.swift  # Grapheme-safe wrap/unwrap + line-prefix formatting
 │   │   ├── MarkdownSupport.swift     # Markdown file types, plain-text stripping, syntax highlighter
 │   │   └── TextSearch.swift          # Pure search + line-index helpers (unit tested)
