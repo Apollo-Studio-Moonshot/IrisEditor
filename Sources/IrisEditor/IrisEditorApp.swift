@@ -17,10 +17,10 @@ struct IrisEditorApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New") {
+                Button("New Tab") {
                     appState.newDocument()
                 }
-                .keyboardShortcut("n", modifiers: .command)
+                .keyboardShortcut("t", modifiers: .command)
 
                 Button("Open…") {
                     appState.openDocument()
@@ -32,7 +32,7 @@ struct IrisEditorApp: App {
                 Button("Close Tab") {
                     appState.closeTab(at: appState.currentTabIndex)
                 }
-                .keyboardShortcut("w", modifiers: [.command, .option])
+                .keyboardShortcut("w", modifiers: .command)
 
                 Divider()
 
