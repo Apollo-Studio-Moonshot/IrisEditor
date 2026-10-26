@@ -24,8 +24,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDisplayName</key>       <string>Iris Editor</string>
     <key>CFBundleExecutable</key>        <string>IrisEditor</string>
     <key>CFBundleIdentifier</key>        <string>com.apollostudiomoonshot.IrisEditor</string>
-    <key>CFBundleVersion</key>           <string>1</string>
-    <key>CFBundleShortVersionString</key><string>1.0.0</string>
+    <key>CFBundleVersion</key>           <string>1.5</string>
+    <key>CFBundleShortVersionString</key><string>1.5</string>
     <key>CFBundlePackageType</key>       <string>APPL</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleIconFile</key>          <string>AppIcon</string>
