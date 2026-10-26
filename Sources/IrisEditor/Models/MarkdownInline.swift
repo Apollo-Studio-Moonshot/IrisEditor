@@ -13,6 +13,8 @@ indirect enum MarkdownInline: Equatable {
     case code(String)
     case link(destination: String, title: String?, children: [MarkdownInline])
     case image(source: String, alt: String, title: String?)
+    /// Obsidian-style `[[target]]` or `[[target|label]]` link.
+    case wikiLink(target: String, label: String)
     case softBreak
     case hardBreak
     case html(String)
@@ -31,6 +33,8 @@ extension Array where Element == MarkdownInline {
                 return children.plainText
             case .image(_, let alt, _):
                 return alt
+            case .wikiLink(_, let label):
+                return label
             case .softBreak, .hardBreak:
                 return " "
             }
@@ -223,6 +227,18 @@ struct MarkdownInlineParser {
             if character == "!", index + 1 < characters.count, characters[index + 1] == "[" {
                 flushText()
                 if let parsed = parseLinkOrImage(characters, at: index, isImage: true) {
+                    tokens.append(.inline(parsed.inline))
+                    index = parsed.nextIndex
+                } else {
+                    textBuffer.append(character)
+                    index += 1
+                }
+                continue
+            }
+
+            if character == "[", index + 1 < characters.count, characters[index + 1] == "[" {
+                if let parsed = parseWikiLink(characters, at: index) {
+                    flushText()
                     tokens.append(.inline(parsed.inline))
                     index = parsed.nextIndex
                 } else {
@@ -673,6 +689,42 @@ struct MarkdownInlineParser {
             } else {
                 cursor += 1
             }
+        }
+        return nil
+    }
+
+    /// Parses Obsidian-style `[[target]]` and `[[target|label]]` spans.
+    private func parseWikiLink(
+        _ characters: [Character],
+        at start: Int
+    ) -> (inline: MarkdownInline, nextIndex: Int)? {
+        guard start + 1 < characters.count,
+              characters[start] == "[",
+              characters[start + 1] == "[" else {
+            return nil
+        }
+
+        var index = start + 2
+        while index + 1 < characters.count {
+            if characters[index] == "\n" { return nil }
+            if characters[index] == "]", characters[index + 1] == "]" {
+                let content = String(characters[(start + 2)..<index])
+                let parts = content.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+                let target = parts.first?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !target.isEmpty else { return nil }
+
+                let rawLabel = parts.count > 1
+                    ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                    : target
+                let label = rawLabel.isEmpty ? target : rawLabel
+
+                return (
+                    inline: .wikiLink(target: target, label: label),
+                    nextIndex: index + 2
+                )
+            }
+            index += 1
         }
         return nil
     }

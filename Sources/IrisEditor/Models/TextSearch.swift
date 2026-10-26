@@ -37,17 +37,19 @@ enum TextSearch {
     }
 
     /// A match is a whole word when neither edge touches a letter, digit, or underscore.
+    /// Composed-character ranges keep Unicode letters (for example “é” or “日本”) intact.
     private static func isWholeWordMatch(_ match: NSRange, in text: NSString) -> Bool {
-        func isWordCharacter(at index: Int) -> Bool {
-            guard index >= 0, index < text.length else { return false }
-            let scalar = text.character(at: index)
-            return (scalar >= 48 && scalar <= 57)   // 0-9
-                || (scalar >= 65 && scalar <= 90)   // A-Z
-                || (scalar >= 97 && scalar <= 122)  // a-z
-                || scalar == 95                     // _
+        !isWordCharacter(at: match.location - 1, in: text)
+            && !isWordCharacter(at: NSMaxRange(match), in: text)
+    }
+
+    private static func isWordCharacter(at index: Int, in text: NSString) -> Bool {
+        guard index >= 0, index < text.length else { return false }
+        let range = text.rangeOfComposedCharacterSequence(at: index)
+        let content = text.substring(with: range)
+        return content.unicodeScalars.contains { scalar in
+            scalar == "_" || CharacterSet.alphanumerics.contains(scalar)
         }
-        return !isWordCharacter(at: match.location - 1)
-            && !isWordCharacter(at: NSMaxRange(match))
     }
 }
 

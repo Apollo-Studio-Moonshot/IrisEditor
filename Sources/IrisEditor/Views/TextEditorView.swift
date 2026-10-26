@@ -4,9 +4,10 @@ import SwiftUI
 struct TextEditorViewRepresentable: NSViewRepresentable {
     @Binding var text: String
     let settings: EditorSettings
+    let documentID: UUID
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, documentID: documentID)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -34,10 +35,27 @@ struct TextEditorViewRepresentable: NSViewRepresentable {
         scrollView.documentView = textView
         context.coordinator.textView = textView
 
-        textView.setPlainText(text)
-        applyLayoutMode(settings.wordWrap, textView: textView, scrollView: scrollView)
+        let viewport = EditorViewportStore.viewport(for: documentID)
+        textView.setPlainText(
+            text,
+            restoringSelection: viewport?.selection,
+            scrollOrigin: viewport?.scrollOrigin
+        )
+        applyLayoutMode(settings.wordWrap, textView: textView, scrollView: scrollView, coordinator: context.coordinator)
 
         return scrollView
+    }
+
+    static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+        guard let textView = nsView.documentView as? IrisTextView,
+              let documentID = coordinator.documentID else {
+            return
+        }
+        EditorViewportStore.save(
+            documentID: documentID,
+            selection: textView.selectedRange(),
+            scrollOrigin: nsView.contentView.bounds.origin
+        )
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
@@ -47,18 +65,45 @@ struct TextEditorViewRepresentable: NSViewRepresentable {
 
         context.coordinator.text = $text
 
-        if textView.string != text {
-            textView.setPlainText(text)
+        let isDocumentSwitch = context.coordinator.documentID != documentID
+        if isDocumentSwitch {
+            if let previousID = context.coordinator.documentID {
+                EditorViewportStore.save(
+                    documentID: previousID,
+                    selection: textView.selectedRange(),
+                    scrollOrigin: nsView.contentView.bounds.origin
+                )
+            }
+            context.coordinator.documentID = documentID
+        }
+
+        if textView.string != text || isDocumentSwitch {
+            let viewport = isDocumentSwitch ? EditorViewportStore.viewport(for: documentID) : nil
+            textView.setPlainText(
+                text,
+                restoringSelection: viewport?.selection,
+                scrollOrigin: viewport?.scrollOrigin
+            )
         }
 
         textView.applySettings(settings)
-        applyLayoutMode(settings.wordWrap, textView: textView, scrollView: nsView)
+        applyLayoutMode(settings.wordWrap, textView: textView, scrollView: nsView, coordinator: context.coordinator)
         nsView.rulersVisible = settings.showLineNumbers
         (nsView.verticalRulerView as? LineNumberRulerView)?.updateFont(settings.lineNumberFont)
     }
 
-    private func applyLayoutMode(_ wrap: Bool, textView: IrisTextView, scrollView: NSScrollView) {
+    private func applyLayoutMode(
+        _ wrap: Bool,
+        textView: IrisTextView,
+        scrollView: NSScrollView,
+        coordinator: Coordinator
+    ) {
         let width = max(scrollView.contentSize.width, 1)
+        guard coordinator.appliedWordWrap != wrap || abs(coordinator.appliedContentWidth - width) > 0.5 else {
+            return
+        }
+        coordinator.appliedWordWrap = wrap
+        coordinator.appliedContentWidth = width
 
         if wrap {
             textView.isHorizontallyResizable = false
@@ -92,9 +137,13 @@ struct TextEditorViewRepresentable: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
         weak var textView: IrisTextView?
+        var documentID: UUID?
+        var appliedWordWrap: Bool?
+        var appliedContentWidth: CGFloat = 0
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, documentID: UUID) {
             self.text = text
+            self.documentID = documentID
         }
 
         nonisolated func textDidChange(_ notification: Notification) {
@@ -109,6 +158,30 @@ struct TextEditorViewRepresentable: NSViewRepresentable {
                 }
             }
         }
+    }
+}
+
+/// Remembers the caret and scroll position for each open document so switching tabs or
+/// changing view mode does not send the user back to the top of the file.
+@MainActor
+enum EditorViewportStore {
+    struct Viewport {
+        var selection: NSRange
+        var scrollOrigin: NSPoint
+    }
+
+    private static var storage: [UUID: Viewport] = [:]
+
+    static func save(documentID: UUID, selection: NSRange, scrollOrigin: NSPoint) {
+        storage[documentID] = Viewport(selection: selection, scrollOrigin: scrollOrigin)
+    }
+
+    static func viewport(for documentID: UUID) -> Viewport? {
+        storage[documentID]
+    }
+
+    static func remove(documentID: UUID) {
+        storage[documentID] = nil
     }
 }
 
@@ -324,6 +397,7 @@ final class IrisTextView: NSTextView {
         case .fencedCode: return .systemPink
         case .blockquote: return .systemGray
         case .link: return .systemTeal
+        case .wikiLink: return .systemIndigo
         case .listMarker: return .systemGreen
         case .horizontalRule: return .systemGray
         }
@@ -331,7 +405,11 @@ final class IrisTextView: NSTextView {
 
     // MARK: - External content
 
-    func setPlainText(_ newText: String) {
+    func setPlainText(
+        _ newText: String,
+        restoringSelection selection: NSRange? = nil,
+        scrollOrigin: NSPoint? = nil
+    ) {
         isApplyingExternalText = true
         let savedDelegate = delegate
         delegate = nil
@@ -341,16 +419,34 @@ final class IrisTextView: NSTextView {
 
         applyTextAttributes(settings)
         undoManager?.removeAllActions()
-        selectedRange = NSRange(location: 0, length: 0)
-        scrollToBeginningOfDocument(nil)
+
+        let textLength = (newText as NSString).length
+        if let selection {
+            let location = min(max(0, selection.location), textLength)
+            let length = min(max(0, selection.length), textLength - location)
+            selectedRange = NSRange(location: location, length: length)
+        } else {
+            selectedRange = NSRange(location: 0, length: 0)
+        }
 
         cachedLineIndex = nil
         findHighlightRanges = []
         currentFindRange = nil
         needsDisplay = true
         enclosingScrollView?.verticalRulerView?.needsDisplay = true
-        postCursorPosition()
 
+        if let scrollOrigin, let scrollView = enclosingScrollView {
+            layoutSubtreeIfNeeded()
+            let contentHeight = scrollView.documentView?.frame.height ?? 0
+            let maxY = max(0, contentHeight - scrollView.contentSize.height)
+            let clamped = NSPoint(x: 0, y: min(max(0, scrollOrigin.y), maxY))
+            scrollView.contentView.scroll(to: clamped)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        } else {
+            scrollToBeginningOfDocument(nil)
+        }
+
+        postCursorPosition()
         recomputeMarkdownHighlights()
     }
 
@@ -481,7 +577,7 @@ final class IrisTextView: NSTextView {
 
         breakUndoCoalescing()
         let selection = selectedRange()
-        shouldChangeText(in: selection, replacementString: snippet)
+        guard shouldChangeText(in: selection, replacementString: snippet) else { return }
         textStorage?.replaceCharacters(in: selection, with: snippet)
         didChangeText()
 

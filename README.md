@@ -21,11 +21,24 @@ Electron, no dependencies, and no project bloat.
   indented/fenced code, rules, inline/reference/autolink links, images (local and remote),
   escaping, inline HTML, HTML blocks (tables in HTML markup render as real tables), pipe
   **tables**, and nesting anywhere — cycling
-  through *source → split → preview* from the toolbar or `⇧⌘P`
+  through *source → split → preview* from the toolbar or `⌥⌘P`
 - **Editor tabs** — multiple documents open as tabs in one window: `⌘T` opens a new tab,
   `⌘W` closes the current tab (prompting to save; the last tab closes the window),
   `⇧⌘[` / `⇧⌘]` cycle tabs, and
   opening a file already shown focuses its existing tab
+- **Animated tab strip** — tabs scale and fade in/out as they open and close, the active
+  Liquid Glass pill slides between tabs, and the strip auto-scrolls to keep the active tab
+  visible
+- **Obsidian-style navigation** — a fuzzy **Quick Switcher** (`⌘P`) for open tabs and recent
+  files, a searchable **Command Palette** (`⇧⌘P`), and a live **Outline** sidebar (`⇧⌘O`)
+  covering ATX and Setext headings
+- **Wiki links** — `[[Note]]`, `[[Note|Alias]]`, and `[[Note#Heading]]` links are highlighted
+  in the editor and clickable in the preview; links resolve to open tabs, recent files, or
+  notes beside the current document, and missing notes are created on demand
+- **Recent files and drag-and-drop** — File ▸ Open Recent, plus dropping `.md` files on the
+  window opens them as tabs
+- **Seamless saves** — dirty documents with a file URL auto-save two seconds after typing
+  stops; the cursor and scroll position are preserved per tab
 - **Markdown formatting** — Bold (`⌘B`), Italic (`⌘I`), Inline Code (`⌘K`),
   Strikethrough, Heading, Bulleted List, and Block Quote via the *Format* menu or a
   quick-format toolbar
@@ -40,13 +53,13 @@ Electron, no dependencies, and no project bloat.
 - Dirty-state indicator in the title bar and status bar
 - Configurable settings: font family, font size, tab width, line numbers, word wrap,
   current-line highlight — persisted to `UserDefaults`
-- Native `Settings` scene (⌘,), File / Edit / View / Model / Format menus, and the standard About panel
+- Native `Settings` scene (⌘,), File / Edit / View / Navigate / Model / Format menus, and the standard About panel
 
 ## Requirements
 
 | | |
 |---|---|
-| OS | macOS 26 or later; macOS 27 “Golden Gate” recommended |
+| OS | macOS 26 or later; macOS 27 “Golden Gate” supported and build-verified against the macOS 27 SDK |
 | Toolchain | Swift 6.3+ (Xcode 26 *or* Command Line Tools) |
 
 No third-party packages, no Package.swift dependencies.
@@ -88,7 +101,11 @@ swift test
 | `⌘S` | Save |
 | `⇧⌘S` | Save As… |
 | `⌘W` | Close Tab (closes the window on the last tab) |
+| `⇧⌘T` | Reopen Closed Tab |
 | `⇧⌘[` / `⇧⌘]` | Previous / Next Tab |
+| `⌘P` | Quick Switcher |
+| `⇧⌘P` | Command Palette |
+| `⇧⌘O` | Toggle Outline |
 | `⌘F` | Find & Replace |
 | `⌘G` | Go to Line… |
 | `⌘=` / `⌘-` / `⌘0` | Zoom in / out / reset |
@@ -96,7 +113,7 @@ swift test
 | `⌘B` | Bold |
 | `⌘I` | Italic |
 | `⌘K` | Inline Code |
-| `⇧⌘P` | Cycle Source / Split / Preview |
+| `⌥⌘P` | Cycle Source / Split / Preview |
 
 ## Project Structure
 
@@ -110,22 +127,29 @@ IrisEditor/
 │   ├── Models/
 │   │   ├── EditorDocument.swift      # Text, file URL, dirty flag, Markdown-aware stats
 │   │   ├── EditorSettings.swift      # Codable settings + UserDefaults persistence
+│   │   ├── FuzzyMatch.swift          # Fuzzy scoring for the quick switcher / palette
 │   │   ├── MarkdownBlocks.swift      # Recursive block parser for the preview
-│   │   ├── MarkdownInline.swift      # Inline parser (emphasis, code, links, images, escapes, HTML)
+│   │   ├── MarkdownInline.swift      # Inline parser (emphasis, code, links, wiki links…)
+│   │   ├── MarkdownOutline.swift     # ATX/Setext heading extraction for the outline
 │   │   ├── MarkdownFormatting.swift  # Grapheme-safe wrap/unwrap + line-prefix formatting
-│   │   ├── MarkdownSupport.swift     # Markdown file types, plain-text stripping, syntax highlighter
+│   │   ├── MarkdownSupport.swift     # Markdown file types, plain-text stripping, highlighter
+│   │   ├── RecentFiles.swift         # Persisted recent-file history
 │   │   └── TextSearch.swift          # Pure search + line-index helpers (unit tested)
 │   └── Views/
-│       ├── ContentView.swift         # Root layout, tab strip, editor card, Markdown toolbar, native toolbar
-│       ├── TabBarView.swift          # In-window document tabs with dirty dots and close buttons
+│       ├── ContentView.swift         # Root layout, editor card, overlays, native toolbar
+│       ├── TabBarView.swift          # Animated document tabs with glass active pill
+│       ├── CommandPaletteView.swift  # Obsidian-style command palette
+│       ├── QuickSwitcherView.swift   # Fuzzy open-tab / recent-file switcher
+│       ├── DocumentOutlineView.swift # Live heading outline sidebar
 │       ├── WindowChrome.swift        # Window configuration + NSGlassEffectView wrappers
-│       ├── TextEditorView.swift      # NSTextView editor, line-number ruler, highlights, Markdown formatting
+│       ├── TextEditorView.swift      # NSTextView editor, line-number ruler, highlights
 │       ├── MarkdownPreviewView.swift # Read-only rendered Markdown preview
 │       ├── FindReplacePanel.swift    # Glass find/replace and go-to-line bar
 │       ├── StatusBarView.swift       # Cursor / counts / size readout
 │       └── SettingsView.swift        # Native grouped Settings form
 └── Tests/IrisEditorTests/
-    └── IrisEditorTests.swift         # Swift Testing suite
+    ├── IrisEditorTests.swift         # Markdown, search, and formatting tests
+    └── WorkspaceTests.swift          # Fuzzy matching, outline, wiki links, recents
 ```
 
 ## Architecture Notes
@@ -139,7 +163,19 @@ IrisEditor/
   `NSVisualEffectView` (`.underWindowBackground`, behind-window blending).
 - **Glass is real Liquid Glass.** `GlassBackdrop` wraps `NSGlassEffectView`; on macOS 27 it
   enables `effectIsInteractive` under an availability check while the deployment target stays
-  at macOS 26.
+  at macOS 26, so the same binary runs on macOS 26 and Golden Gate.
+- **Tabs animate as documents come and go.** Insertion/removal transitions live on each tab
+  item, the active glass pill uses `matchedGeometryEffect`, and the strip scrolls the active
+  tab into view. Tab mutations are wrapped in `withAnimation` in `AppState`.
+- **Quick switcher and command palette** are pure SwiftUI overlays. `FuzzyMatch` scores
+  subsequence matches with word-boundary and prefix bonuses, and `RecentFiles` persists a
+  20-entry history in `UserDefaults`.
+- **Wiki links** are parsed by `MarkdownInlineParser` into `.wikiLink(target:label:)`, tinted
+  by the syntax highlighter, rendered as accent-colored links in the preview, and resolved by
+  `AppState.openWikiLink` (open tab → recent file → sibling note → create sibling note).
+  `ContentView` intercepts the preview's `iriseditor://wiki` URLs with `OpenURLAction`.
+- **Outline parsing** is pure and unit-tested in `MarkdownOutline`, which handles ATX and
+  Setext headings, ignores fenced code, and flattens inline Markdown for the sidebar.
 - **Find/replace** recomputes matches through a debounced Combine pipeline (150 ms) that
   re-subscribes when the document changes, then broadcasts `NSRange`s via `NotificationCenter`
   for the AppKit text view to highlight.
@@ -160,7 +196,8 @@ IrisEditor/
 ## Status
 
 Iris Editor is an early work-in-progress. Markdown editing, syntax highlighting, preview,
-formatting, find/replace, go-to-line, settings, and the status bar are functional.
+formatting, find/replace, go-to-line, settings, animated tabs, the quick switcher, command
+palette, outline sidebar, wiki links, recent files, and the status bar are functional.
 
 **Not yet implemented:** GPT-2 autocomplete. The original Python prototype used
 `transformers`/`torch`; running it in Swift would require converting the model to Core ML.

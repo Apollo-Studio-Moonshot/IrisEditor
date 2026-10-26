@@ -34,6 +34,34 @@ struct IrisEditorApp: App {
                 }
                 .keyboardShortcut("w", modifiers: .command)
 
+                Button("Reopen Closed Tab") {
+                    appState.reopenClosedTab()
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(appState.closedFileURLs.isEmpty)
+
+                Divider()
+
+                Menu("Open Recent") {
+                    if appState.recentFiles.isEmpty {
+                        Button("No Recent Files") {}
+                            .disabled(true)
+                    } else {
+                        ForEach(appState.recentFiles, id: \.self) { url in
+                            Button(url.lastPathComponent) {
+                                appState.open(url: url)
+                            }
+                            .help(url.path)
+                        }
+
+                        Divider()
+
+                        Button("Clear Menu") {
+                            appState.clearRecentFiles()
+                        }
+                    }
+                }
+
                 Divider()
 
                 Button("Next Tab") {
@@ -48,6 +76,29 @@ struct IrisEditorApp: App {
                 }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
                 .disabled(appState.tabs.count < 2)
+            }
+
+            CommandGroup(replacing: .printItem) {
+                EmptyView()
+            }
+
+            CommandMenu("Navigate") {
+                Button("Quick Switcher…") {
+                    appState.toggleQuickSwitcher()
+                }
+                .keyboardShortcut("p", modifiers: .command)
+
+                Button("Command Palette…") {
+                    appState.toggleCommandPalette()
+                }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Toggle Outline") {
+                    appState.toggleOutline()
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
             }
 
             CommandGroup(replacing: .saveItem) {
@@ -140,7 +191,7 @@ struct IrisEditorApp: App {
                 Button("Toggle Preview") {
                     appState.viewMode = appState.viewMode.next
                 }
-                .keyboardShortcut("p", modifiers: [.command, .shift])
+                .keyboardShortcut("p", modifiers: [.command, .option])
             }
 
             CommandGroup(replacing: .appInfo) {
@@ -184,6 +235,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        AppState.shared.open(urls: urls)
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {

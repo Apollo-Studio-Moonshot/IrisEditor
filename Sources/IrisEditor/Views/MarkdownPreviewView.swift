@@ -319,6 +319,14 @@ private struct MarkdownInlineText {
                 run.foregroundColor = .secondary
                 result.append(run)
 
+            case .wikiLink(let target, let label):
+                var run = AttributedString(label)
+                run.foregroundColor = .accentColor
+                if let url = wikiURL(for: target) {
+                    run.link = url
+                }
+                result.append(run)
+
             case .softBreak:
                 result.append(AttributedString(" "))
 
@@ -362,6 +370,15 @@ private struct MarkdownInlineText {
             ).standardizedFileURL
         }
         return URL(string: trimmed)
+    }
+
+    /// Custom URL intercepted by `ContentView` to resolve `[[wiki links]]` inside Iris.
+    private func wikiURL(for target: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "iriseditor"
+        components.host = "wiki"
+        components.queryItems = [URLQueryItem(name: "target", value: target)]
+        return components.url
     }
 }
 

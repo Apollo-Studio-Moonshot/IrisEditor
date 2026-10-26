@@ -20,20 +20,34 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 TabBarView()
 
-                if appState.showFindReplace || appState.showGoToLine {
-                    FindReplacePanel()
-                        .padding(.top, 10)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                HStack(spacing: 0) {
+                    if appState.showOutline {
+                        DocumentOutlineView()
+                            .transition(.move(edge: .leading).combined(with: .opacity))
+                    }
+
+                    VStack(spacing: 0) {
+                        if appState.showFindReplace || appState.showGoToLine {
+                            FindReplacePanel()
+                                .padding(.top, 10)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+
+                        if appState.viewMode != .preview {
+                            markdownToolbar
+                                .transition(.opacity)
+                        }
+
+                        editorCard
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
-                if appState.viewMode != .preview {
-                    markdownToolbar
-                        .transition(.opacity)
-                }
-
-                editorCard
                 StatusBarView()
             }
+        }
+        .overlay {
+            overlayContent
         }
         .background(
             WindowConfigurator(
@@ -70,6 +84,20 @@ struct ContentView: View {
 
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
+                    appState.toggleQuickSwitcher()
+                } label: {
+                    Label("Quick Switcher", systemImage: "rectangle.stack")
+                }
+                .help("Quick Switcher (⌘P)")
+
+                Button {
+                    appState.toggleOutline()
+                } label: {
+                    Label("Outline", systemImage: "list.bullet.indent")
+                }
+                .help("Toggle Outline (⇧⌘O)")
+
+                Button {
                     appState.showFindReplace.toggle()
                 } label: {
                     Label("Find", systemImage: "magnifyingglass")
@@ -92,6 +120,15 @@ struct ContentView: View {
             }
 
             ToolbarItem(placement: .primaryAction) {
+                Button {
+                    appState.toggleCommandPalette()
+                } label: {
+                    Label("Command Palette", systemImage: "command")
+                }
+                .help("Command Palette (⇧⌘P)")
+            }
+
+            ToolbarItem(placement: .primaryAction) {
                 SettingsLink {
                     Label("Settings", systemImage: "gearshape")
                 }
@@ -101,6 +138,70 @@ struct ContentView: View {
         .animation(.snappy(duration: 0.22), value: appState.showFindReplace)
         .animation(.snappy(duration: 0.22), value: appState.showGoToLine)
         .animation(.snappy(duration: 0.22), value: appState.viewMode)
+        .animation(.snappy(duration: 0.25), value: appState.showOutline)
+        .animation(.snappy(duration: 0.2), value: appState.showCommandPalette)
+        .animation(.snappy(duration: 0.2), value: appState.showQuickSwitcher)
+        .dropDestination(for: URL.self) { urls, _ in
+            let files = urls.filter(\.isFileURL)
+            guard !files.isEmpty else { return false }
+            appState.open(urls: files)
+            return true
+        }
+        .environment(\.openURL, OpenURLAction { url in
+            if url.isFileURL,
+               ["md", "markdown", "txt"].contains(url.pathExtension.lowercased()) {
+                appState.open(url: url)
+                return .handled
+            }
+
+            guard url.scheme == "iriseditor", url.host == "wiki" else {
+                return .systemAction
+            }
+            let target = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?
+                .first(where: { $0.name == "target" })?
+                .value
+            guard let target else { return .discarded }
+            appState.openWikiLink(target)
+            return .handled
+        })
+    }
+
+    @ViewBuilder
+    private var overlayContent: some View {
+        if appState.showCommandPalette || appState.showQuickSwitcher {
+            ZStack(alignment: .top) {
+                Color.black.opacity(0.10)
+                    .ignoresSafeArea()
+                    .contentShape(.rect)
+                    .onTapGesture {
+                        appState.dismissCommandPalette()
+                        appState.dismissQuickSwitcher()
+                    }
+                    .transition(.opacity)
+
+                if appState.showCommandPalette {
+                    CommandPaletteView()
+                        .padding(.top, 72)
+                        .transition(
+                            .scale(scale: 0.96, anchor: .top)
+                                .combined(with: .opacity)
+                                .combined(with: .offset(y: -8))
+                        )
+                }
+
+                if appState.showQuickSwitcher {
+                    QuickSwitcherView()
+                        .padding(.top, 72)
+                        .transition(
+                            .scale(scale: 0.96, anchor: .top)
+                                .combined(with: .opacity)
+                                .combined(with: .offset(y: -8))
+                        )
+                }
+            }
+            .zIndex(10)
+        }
     }
 
     private var editorCard: some View {
@@ -154,7 +255,8 @@ struct ContentView: View {
                     appState.document.isDirty = true
                 }
             ),
-            settings: appState.settings
+            settings: appState.settings,
+            documentID: appState.document.id
         )
         .padding(1)
         .clipShape(.rect(cornerRadius: 13))

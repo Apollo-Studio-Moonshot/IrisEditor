@@ -18,12 +18,15 @@ struct StatusBarView: View {
 
             if appState.document.isDirty {
                 item("Edited")
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 separator
+                    .transition(.opacity)
             }
             item(appState.document.fileSizeDescription)
             separator
             item("UTF-8")
         }
+        .animation(.snappy(duration: 0.18), value: appState.document.isDirty)
         .font(.system(size: 11))
         .monospacedDigit()
         .foregroundStyle(.secondary)
@@ -61,5 +64,7 @@ struct StatusBarView: View {
     private func item(_ text: String) -> some View {
         Text(text)
             .foregroundStyle(.secondary)
+            .contentTransition(.numericText())
+            .animation(.snappy(duration: 0.18), value: text)
     }
 }

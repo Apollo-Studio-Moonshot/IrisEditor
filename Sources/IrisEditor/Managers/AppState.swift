@@ -28,9 +28,9 @@ enum EditorViewMode: Equatable {
 
     var toolbarHelp: String {
         switch self {
-        case .source: return "Split Editor + Preview (⇧⌘P)"
-        case .split: return "Preview Only (⇧⌘P)"
-        case .preview: return "Edit Markdown (⇧⌘P)"
+        case .source: return "Split Editor + Preview (⌥⌘P)"
+        case .split: return "Preview Only (⌥⌘P)"
+        case .preview: return "Edit Markdown (⌥⌘P)"
         }
     }
 }
@@ -96,6 +96,24 @@ final class AppState: ObservableObject {
     /// Whether the rendered Markdown preview replaces the editor source view.
     @Published var viewMode: EditorViewMode = .source
 
+    /// Obsidian-style command palette overlay.
+    @Published var showCommandPalette = false
+
+    /// Obsidian-style document outline sidebar panel.
+    @Published var showOutline = false
+
+    /// Obsidian-style fuzzy quick switcher for open tabs and recent files.
+    @Published var showQuickSwitcher = false
+
+    /// Optional query used when the quick switcher is opened from a wiki link.
+    @Published var quickSwitcherInitialQuery = ""
+
+    /// Most-recently opened or saved files, newest first.
+    @Published private(set) var recentFiles: [URL] = RecentFiles.load()
+
+    /// File-backed tabs that were closed this session, newest last, used by Reopen Closed Tab.
+    @Published private(set) var closedFileURLs: [URL] = []
+
     @Published var findText = "" {
         didSet {
             if findText != oldValue {
@@ -130,39 +148,75 @@ final class AppState: ObservableObject {
 
     func newDocument() {
         let fresh = EditorDocument()
-        tabs.append(fresh)
-        currentTabIndex = tabs.count - 1
-        document = fresh
+        withAnimation(.snappy(duration: 0.28, extraBounce: 0.04)) {
+            tabs.append(fresh)
+            currentTabIndex = tabs.count - 1
+            document = fresh
+        }
     }
 
     func selectTab(at index: Int) {
-        guard tabs.indices.contains(index) else { return }
-        currentTabIndex = index
-        document = tabs[index]
+        guard tabs.indices.contains(index), index != currentTabIndex else { return }
+        withAnimation(.snappy(duration: 0.24)) {
+            currentTabIndex = index
+            document = tabs[index]
+        }
     }
 
     /// Closes a tab. Prompts to save when its document is dirty; closing the last tab
     /// closes the window itself instead of trapping the user behind a rebuilt empty tab.
+    ///
+    /// Closing a background tab keeps the current document in front instead of jumping
+    /// to a neighbor, matching native tab behavior.
     func closeTab(at index: Int) {
         guard tabs.indices.contains(index) else { return }
         let target = tabs[index]
+        let activeDocument = document
+        let wasActive = target.id == activeDocument.id
 
         if target.isDirty {
             guard saveTabChanges(for: target) else { return }
         }
 
-        if let documentIndex = tabs.firstIndex(where: { $0.id == target.id }) {
-            tabs.remove(at: documentIndex)
-        }
+        guard let removalIndex = tabs.firstIndex(where: { $0.id == target.id }) else { return }
+        let closedURL = target.fileURL
 
-        if tabs.isEmpty {
+        if tabs.count == 1 {
+            withAnimation(.snappy(duration: 0.22)) {
+                _ = tabs.remove(at: removalIndex)
+            }
+            EditorViewportStore.remove(documentID: target.id)
             (editorWindow ?? NSApp.keyWindow)?.close()
             return
         }
 
-        let next = min(index, tabs.count - 1)
-        currentTabIndex = next
-        document = tabs[next]
+        withAnimation(.snappy(duration: 0.28, extraBounce: 0.04)) {
+            tabs.remove(at: removalIndex)
+            EditorViewportStore.remove(documentID: target.id)
+
+            if let closedURL {
+                closedFileURLs.append(closedURL)
+                if closedFileURLs.count > 20 {
+                    closedFileURLs.removeFirst(closedFileURLs.count - 20)
+                }
+            }
+
+            if wasActive {
+                let next = min(index, tabs.count - 1)
+                currentTabIndex = next
+                document = tabs[next]
+            } else if let activeIndex = tabs.firstIndex(where: { $0.id == activeDocument.id }) {
+                currentTabIndex = activeIndex
+                // Reassigning the same document would reset the caret and find state.
+                if document.id != activeDocument.id {
+                    document = activeDocument
+                }
+            } else {
+                let next = min(removalIndex, tabs.count - 1)
+                currentTabIndex = next
+                document = tabs[next]
+            }
+        }
     }
 
     /// Saves dirty changes for a specific tab (used before closing), temporarily
@@ -200,31 +254,161 @@ final class AppState: ObservableObject {
         panel.message = "Choose Markdown or plain-text files to open."
 
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
-        for url in panel.urls {
+        open(urls: panel.urls)
+    }
+
+    func open(urls: [URL]) {
+        for url in urls {
             open(url: url)
         }
     }
 
-    private func open(url: URL) {
+    /// Reopens the most recently closed file-backed tab.
+    func reopenClosedTab() {
+        while let url = closedFileURLs.popLast() {
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            open(url: url)
+            return
+        }
+    }
+
+    /// Opens a file in a new tab, or focuses the existing tab when it is already open.
+    func open(url: URL) {
+        let standardized = url.standardizedFileURL
+
         // If the file is already open in a tab, just focus that tab.
-        if let existing = tabs.firstIndex(where: { $0.fileURL == url }) {
+        if let existing = tabs.firstIndex(where: { $0.fileURL?.standardizedFileURL == standardized }) {
             selectTab(at: existing)
             return
         }
 
         do {
             var encoding: String.Encoding = .utf8
-            let contents = try String(contentsOf: url, usedEncoding: &encoding)
+            let contents = try String(contentsOf: standardized, usedEncoding: &encoding)
 
             let opened = EditorDocument()
             opened.text = contents
-            opened.fileURL = url
+            opened.fileURL = standardized
             opened.isDirty = false
-            tabs.append(opened)
-            currentTabIndex = tabs.count - 1
-            document = opened
+            recordRecent(standardized)
+
+            withAnimation(.snappy(duration: 0.28, extraBounce: 0.04)) {
+                tabs.append(opened)
+                currentTabIndex = tabs.count - 1
+                document = opened
+            }
+            NSApp.activate(ignoringOtherApps: true)
         } catch {
             presentError("Couldn’t open “\(url.lastPathComponent)”.", error: error)
+        }
+    }
+
+    /// Resolves an Obsidian-style `[[wiki link]]`, focusing open tabs, recent files, or
+    /// notes next to the current document. Missing notes are created lazily, matching
+    /// Obsidian's behavior for unresolved links.
+    func openWikiLink(_ rawTarget: String) {
+        let trimmed = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let pieces = trimmed.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+        let rawNote = pieces.first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? trimmed
+        let heading = pieces.count > 1
+            ? String(pieces[1]).trimmingCharacters(in: .whitespaces)
+            : nil
+
+        let noteName: String
+        if rawNote.isEmpty {
+            noteName = document.fileURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
+        } else {
+            noteName = rawNote
+        }
+
+        let baseName: String
+        let lastComponent = (noteName as NSString).lastPathComponent
+        let extensionName = (lastComponent as NSString).pathExtension.lowercased()
+        if ["md", "markdown"].contains(extensionName) {
+            baseName = (lastComponent as NSString).deletingPathExtension
+        } else {
+            baseName = lastComponent
+        }
+
+        if let index = tabs.firstIndex(where: { tab in
+            let openName = tab.fileURL?.deletingPathExtension().lastPathComponent
+                ?? (tab.displayName as NSString).deletingPathExtension
+            return openName.caseInsensitiveCompare(baseName) == .orderedSame
+        }) {
+            selectTab(at: index)
+            revealHeading(named: heading)
+            return
+        }
+
+        if let recent = recentFiles.first(where: {
+            FileManager.default.fileExists(atPath: $0.path)
+                && $0.deletingPathExtension().lastPathComponent.caseInsensitiveCompare(baseName) == .orderedSame
+        }) {
+            open(url: recent)
+            revealHeading(named: heading)
+            return
+        }
+
+        guard let folder = document.fileURL?.deletingLastPathComponent() else {
+            presentQuickSwitcher(for: noteName)
+            return
+        }
+
+        let hasMarkdownExtension = ["md", "markdown"].contains(
+            (noteName as NSString).pathExtension.lowercased()
+        )
+        let fileName = hasMarkdownExtension
+            ? noteName
+            : noteName + "." + MarkdownFileType.defaultExtension
+        guard !fileName.contains(".."), !fileName.hasPrefix("/") else {
+            presentQuickSwitcher(for: baseName)
+            return
+        }
+
+        let candidate = folder.appendingPathComponent(fileName).standardizedFileURL
+        let folderPath = folder.standardizedFileURL.path
+        guard candidate.path.hasPrefix(folderPath + "/") else {
+            presentQuickSwitcher(for: baseName)
+            return
+        }
+
+        if FileManager.default.fileExists(atPath: candidate.path) {
+            open(url: candidate)
+            revealHeading(named: heading)
+            return
+        }
+
+        do {
+            try FileManager.default.createDirectory(
+                at: candidate.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let title = candidate.deletingPathExtension().lastPathComponent
+            try "# \(title)\n".write(to: candidate, atomically: true, encoding: .utf8)
+            open(url: candidate)
+            revealHeading(named: heading)
+        } catch {
+            presentError("Couldn’t create “\(candidate.lastPathComponent)”.", error: error)
+        }
+    }
+
+    private func revealHeading(named name: String?) {
+        guard let name, !name.isEmpty else { return }
+        guard let heading = MarkdownOutline.headings(in: document.text).first(where: {
+            $0.title.caseInsensitiveCompare(name) == .orderedSame
+        }) else {
+            return
+        }
+        reveal(line: heading.line)
+    }
+
+    private func presentQuickSwitcher(for query: String) {
+        quickSwitcherInitialQuery = query
+        withAnimation(.snappy(duration: 0.2)) {
+            showCommandPalette = false
+            showQuickSwitcher = true
         }
     }
 
@@ -261,11 +445,24 @@ final class AppState: ObservableObject {
             try document.text.write(to: resolved, atomically: true, encoding: .utf8)
             document.fileURL = resolved
             document.isDirty = false
+            recordRecent(resolved)
             return true
         } catch {
             presentError("Couldn't save \"\(resolved.lastPathComponent)\".", error: error)
             return false
         }
+    }
+
+    private func recordRecent(_ url: URL) {
+        let updated = RecentFiles.recording(url, in: recentFiles)
+        guard updated != recentFiles else { return }
+        recentFiles = updated
+        RecentFiles.save(updated)
+    }
+
+    func clearRecentFiles() {
+        recentFiles = []
+        RecentFiles.save([])
     }
 
     /// Offers to save unsaved changes before a destructive action (new, open, quit).
@@ -350,6 +547,26 @@ final class AppState: ObservableObject {
         closeFindPanel()
     }
 
+    /// Jumps to a line from the outline or quick switcher, leaving preview-only mode so
+    /// the caret is actually visible.
+    func reveal(line: Int) {
+        let post = {
+            NotificationCenter.default.post(name: .goToLine, object: nil, userInfo: ["line": line])
+        }
+
+        guard viewMode == .preview else {
+            post()
+            return
+        }
+
+        // Wait for the AppKit editor to be rebuilt before delivering the jump.
+        withAnimation(.snappy(duration: 0.22)) {
+            viewMode = .source
+        } completion: {
+            post()
+        }
+    }
+
     func closeFindPanel() {
         showFindReplace = false
         showGoToLine = false
@@ -380,6 +597,11 @@ final class AppState: ObservableObject {
                 "replacement": replaceText
             ]
         )
+        // The ranges are stale as soon as the text changes. Drop them immediately so a
+        // second Replace/Replace All cannot mutate the wrong offsets before the debounced
+        // recompute catches up.
+        findMatches = []
+        findMatchIndex = -1
         clearFindHighlights()
     }
 
@@ -390,6 +612,64 @@ final class AppState: ObservableObject {
             userInfo["scroll"] = scroll
         }
         NotificationCenter.default.post(name: .findHighlight, object: nil, userInfo: userInfo)
+    }
+
+    // MARK: - Command palette & outline
+
+    func toggleCommandPalette() {
+        withAnimation(.snappy(duration: 0.2)) {
+            showCommandPalette.toggle()
+            if showCommandPalette {
+                showQuickSwitcher = false
+            }
+        }
+        if !showCommandPalette {
+            NotificationCenter.default.post(name: .focusEditor, object: nil)
+        }
+    }
+
+    func dismissCommandPalette() {
+        guard showCommandPalette else { return }
+        withAnimation(.snappy(duration: 0.18)) {
+            showCommandPalette = false
+        }
+        NotificationCenter.default.post(name: .focusEditor, object: nil)
+    }
+
+    func toggleQuickSwitcher() {
+        let opening = !showQuickSwitcher
+        withAnimation(.snappy(duration: 0.2)) {
+            showQuickSwitcher.toggle()
+            if showQuickSwitcher {
+                showCommandPalette = false
+            }
+        }
+        if opening {
+            quickSwitcherInitialQuery = ""
+        } else {
+            NotificationCenter.default.post(name: .focusEditor, object: nil)
+        }
+    }
+
+    func dismissQuickSwitcher() {
+        guard showQuickSwitcher else { return }
+        withAnimation(.snappy(duration: 0.18)) {
+            showQuickSwitcher = false
+        }
+        quickSwitcherInitialQuery = ""
+        NotificationCenter.default.post(name: .focusEditor, object: nil)
+    }
+
+    func consumeQuickSwitcherInitialQuery() -> String {
+        let query = quickSwitcherInitialQuery
+        quickSwitcherInitialQuery = ""
+        return query
+    }
+
+    func toggleOutline() {
+        withAnimation(.snappy(duration: 0.25)) {
+            showOutline.toggle()
+        }
     }
 
     // MARK: - View commands
@@ -455,6 +735,24 @@ final class AppState: ObservableObject {
             .debounce(for: .milliseconds(150), scheduler: RunLoop.main)
             .sink { [weak self] query, change in
                 self?.updateFindMatches(query: query, text: change.text)
+            }
+            .store(in: &cancellables)
+
+        // Auto-save: when the user stops typing for 2 seconds, save to disk if the
+        // document has a file URL and is dirty. Mirrors Obsidian's seamless save behavior.
+        // Subscribing through `textChanges` means tab switches follow the active document
+        // instead of leaving the subscription pinned to the first one.
+        textChanges
+            .dropFirst()
+            .debounce(for: .seconds(2), scheduler: RunLoop.main)
+            .sink { [weak self] change in
+                guard let self else { return }
+                guard change.id == self.document.id,
+                      self.document.isDirty,
+                      let url = self.document.fileURL else {
+                    return
+                }
+                _ = self.save(to: url)
             }
             .store(in: &cancellables)
 

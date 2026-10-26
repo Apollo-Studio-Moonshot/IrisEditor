@@ -33,6 +33,18 @@ enum MarkdownPlainText {
     static func stripped(_ text: String) -> String {
         var result = text
 
+        // Obsidian-style wiki links: keep the visible label, not the brackets/target.
+        result = result.replacingOccurrences(
+            of: #"\[\[[^\]\n|]+\|([^\]\n]+)\]\]"#,
+            with: "$1",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: #"\[\[([^\]\n]+)\]\]"#,
+            with: "$1",
+            options: .regularExpression
+        )
+
         // Inline code markers (backticks).
         result = result.replacingOccurrences(of: "`", with: "")
 
@@ -97,7 +109,7 @@ enum MarkdownPlainText {
 /// are cheap to invalidate, and never mutate user content.
 enum MarkdownHighlighter {
 
-    enum Token {
+    enum Token: Equatable {
         case heading
         case emphasis
         case strong
@@ -105,6 +117,7 @@ enum MarkdownHighlighter {
         case fencedCode
         case blockquote
         case link
+        case wikiLink
         case listMarker
         case horizontalRule
     }
@@ -303,6 +316,17 @@ enum MarkdownHighlighter {
         while i < end {
             let c = ns.character(at: i)
 
+            // Obsidian-style wiki links: [[target]] or [[target|label]].
+            if c == 91, i + 1 < end, ns.character(at: i + 1) == 91,
+               let close = findWikiLinkClose(ns, from: i + 2, end: end) {
+                result.append(Highlight(
+                    nsRange: NSRange(location: base + i, length: close + 2 - i),
+                    token: .wikiLink
+                ))
+                i = close + 2
+                continue
+            }
+
             // Inline code.
             if c == 96 {
                 if let close = findMatchingBacktick(ns, from: i, end: end) {
@@ -336,6 +360,18 @@ enum MarkdownHighlighter {
         var i = start + 1
         while i < end {
             if ns.character(at: i) == 96 { return i }
+            i += 1
+        }
+        return nil
+    }
+
+    private static func findWikiLinkClose(_ ns: NSString, from start: Int, end: Int) -> Int? {
+        var i = start
+        while i + 1 < end {
+            if ns.character(at: i) == 10 { return nil } // no newlines inside wiki links
+            if ns.character(at: i) == 93, ns.character(at: i + 1) == 93 {
+                return i
+            }
             i += 1
         }
         return nil
