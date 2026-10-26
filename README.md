@@ -16,8 +16,11 @@ Electron, no dependencies, and no project bloat.
 - **Markdown-first**: new documents default to `.md`, open/save panels target Markdown,
   and the gutter/editor highlight headings, emphasis, links, lists, and fenced code
 - **Markdown preview** — a read-only block-level renderer (headings, lists, quotes,
-  fenced code, rules, with inline styling via `AttributedString(markdown:)`)
-  toggled from the toolbar or `⇧⌘P`
+  fenced code, pipe **tables**, rules, with inline styling via `AttributedString(markdown:)`)
+  cycling through *source → split → preview* from the toolbar or `⇧⌘P`
+- **Editor tabs** — multiple documents open as tabs in one window: `⌘N` opens a new tab,
+  `⌥⌘W` closes the current tab (prompting to save), `⇧⌘[` / `⇧⌘]` cycle tabs, and
+  opening a file already shown focuses its existing tab
 - **Markdown formatting** — Bold (`⌘B`), Italic (`⌘I`), Inline Code (`⌘K`),
   Strikethrough, Heading, Bulleted List, and Block Quote via the *Format* menu or a
   quick-format toolbar
@@ -25,7 +28,8 @@ Electron, no dependencies, and no project bloat.
   status bar reports visible content
 - TextKit editor with an `NSRulerView` line-number gutter, current-line highlight,
   and live find-match highlighting
-- **Find & Replace** — case-insensitive, live match highlighting, replace current / replace all
+- **Find & Replace** — case-insensitive by default with optional *Match Case* and
+  *Whole Word* toggles, live match highlighting, replace current / replace all
 - **Go to Line** — jump directly to any line number
 - Status bar with live cursor position, line count, word count, character count, and file size
 - Dirty-state indicator in the title bar and status bar
@@ -74,10 +78,12 @@ swift test
 
 | Shortcut | Action |
 |---|---|
-| `⌘N` | New document |
-| `⌘O` | Open… |
+| `⌘N` | New tab |
+| `⌘O` | Open… (multi-select) |
 | `⌘S` | Save |
 | `⇧⌘S` | Save As… |
+| `⌥⌘W` | Close Tab |
+| `⇧⌘[` / `⇧⌘]` | Previous / Next Tab |
 | `⌘F` | Find & Replace |
 | `⌘G` | Go to Line… |
 | `⌘=` / `⌘-` / `⌘0` | Zoom in / out / reset |
@@ -85,7 +91,7 @@ swift test
 | `⌘B` | Bold |
 | `⌘I` | Italic |
 | `⌘K` | Inline Code |
-| `⇧⌘P` | Toggle Markdown Preview |
+| `⇧⌘P` | Cycle Source / Split / Preview |
 
 ## Project Structure
 
@@ -104,7 +110,8 @@ IrisEditor/
 │   │   ├── MarkdownSupport.swift     # Markdown file types, plain-text stripping, syntax highlighter
 │   │   └── TextSearch.swift          # Pure search + line-index helpers (unit tested)
 │   └── Views/
-│       ├── ContentView.swift         # Root layout, editor card, Markdown toolbar, native toolbar
+│       ├── ContentView.swift         # Root layout, tab strip, editor card, Markdown toolbar, native toolbar
+│       ├── TabBarView.swift          # In-window document tabs with dirty dots and close buttons
 │       ├── WindowChrome.swift        # Window configuration + NSGlassEffectView wrappers
 │       ├── TextEditorView.swift      # NSTextView editor, line-number ruler, highlights, Markdown formatting
 │       ├── MarkdownPreviewView.swift # Read-only rendered Markdown preview

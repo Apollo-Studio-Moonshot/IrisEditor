@@ -23,7 +23,6 @@ struct MarkdownPreviewView: View {
         }
         .background {
             GlassBackdrop(style: .regular, cornerRadius: 0)
-                .ignoresSafeArea()
         }
     }
 }
@@ -80,6 +79,9 @@ private struct MarkdownBlockView: View {
                     .fill(Color(nsColor: .quaternaryLabelColor).opacity(0.5))
             )
 
+        case .table(let header, let alignments, let rows):
+            MarkdownTablePreview(header: header, alignments: alignments, rows: rows)
+
         case .unorderedList(let items):
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
@@ -132,5 +134,73 @@ private struct MarkdownBlockView: View {
         case 5: return 14
         default: return 13
         }
+    }
+}
+
+/// Renders a parsed GFM pipe table with per-column alignment and inline Markdown cells.
+private struct MarkdownTablePreview: View {
+    let header: [String]
+    let alignments: [MarkdownTableAlignment]
+    let rows: [[String]]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(header.indices, id: \.self) { column in
+                        cell(header[column], alignment: alignment(column), isHeader: true)
+                    }
+                }
+
+                Divider()
+                    .gridCellColumns(header.count)
+
+                ForEach(rows.indices, id: \.self) { row in
+                    GridRow {
+                        ForEach(header.indices, id: \.self) { column in
+                            cell(rows[row][column], alignment: alignment(column), isHeader: false)
+                        }
+                    }
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 0.5)
+        }
+        .clipShape(.rect(cornerRadius: 8))
+    }
+
+    private func alignment(_ column: Int) -> MarkdownTableAlignment {
+        column < alignments.count ? alignments[column] : .left
+    }
+
+    @ViewBuilder
+    private func cell(_ text: String, alignment: MarkdownTableAlignment, isHeader: Bool) -> some View {
+        inlineText(text)
+            .font(.system(size: 13, weight: isHeader ? .semibold : .regular))
+            .frame(maxWidth: .infinity, alignment: frameAlignment(alignment))
+            .padding(.horizontal, 10)
+            .padding(.vertical, isHeader ? 7 : 5)
+            .background(isHeader ? Color(nsColor: .quaternaryLabelColor).opacity(0.35) : .clear)
+    }
+
+    private func frameAlignment(_ alignment: MarkdownTableAlignment) -> Alignment {
+        switch alignment {
+        case .left: return .leading
+        case .center: return .center
+        case .right: return .trailing
+        }
+    }
+
+    private func inlineText(_ markdown: String) -> Text {
+        if let attributed = try? AttributedString(
+            markdown: markdown,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            return Text(attributed)
+        }
+        return Text(markdown)
     }
 }

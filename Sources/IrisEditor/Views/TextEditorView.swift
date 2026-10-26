@@ -226,6 +226,12 @@ final class IrisTextView: NSTextView {
             name: .toggleMarkdownFormat,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleInsertSnippet(_:)),
+            name: .insertSnippet,
+            object: nil
+        )
     }
 
     override func viewDidMoveToWindow() {
@@ -468,6 +474,21 @@ final class IrisTextView: NSTextView {
 
         needsDisplay = true
         enclosingScrollView?.verticalRulerView?.needsDisplay = true
+    }
+
+    @objc private func handleInsertSnippet(_ notification: Notification) {
+        guard let snippet = notification.userInfo?["text"] as? String else { return }
+
+        breakUndoCoalescing()
+        let selection = selectedRange()
+        shouldChangeText(in: selection, replacementString: snippet)
+        textStorage?.replaceCharacters(in: selection, with: snippet)
+        didChangeText()
+
+        let newLocation = selection.location + (snippet as NSString).length
+        setSelectedRange(NSRange(location: newLocation, length: 0))
+        scrollRangeToVisible(NSRange(location: newLocation, length: 0))
+        window?.makeFirstResponder(self)
     }
 
     @objc private func handleFocusEditor(_ notification: Notification) {

@@ -12,4 +12,4 @@ __pycache__/
 *.py[cod]
 
 # Built app bundle (regenerable; keep icon sources in dist/ instead)
-/dist/IrisEditor.app/
+/dist/Iris Editor.app/

@@ -9,6 +9,23 @@ struct TextSearchTests {
         #expect(ranges.first?.location == 0)
     }
 
+    @Test func caseSensitiveSearchNarrowsMatches() {
+        let ranges = TextSearch.nsRanges(of: "swift", in: "Swift and swift and SWIFT", caseSensitive: true)
+        #expect(ranges.count == 1)
+        #expect(ranges.first?.location == 10)
+    }
+
+    @Test func wholeWordSearchSkipsSubstrings() {
+        let text = "cat category Cat"
+        #expect(TextSearch.nsRanges(of: "cat", in: text, wholeWord: true).count == 2)
+        #expect(TextSearch.nsRanges(of: "cat", in: text).count == 3)
+    }
+
+    @Test func wholeWordRespectsUnderscoreNeighbors() {
+        // "cat" inside "tom_cat" is not a standalone word.
+        #expect(TextSearch.nsRanges(of: "cat", in: "tom_cat cat", wholeWord: true).count == 1)
+    }
+
     @Test func emptyQueryReturnsNoMatches() {
         #expect(TextSearch.nsRanges(of: "", in: "abc").isEmpty)
     }
@@ -243,6 +260,7 @@ struct MarkdownBlockParserTests {
             case .codeBlock: return "code"
             case .unorderedList: return "ul"
             case .orderedList: return "ol"
+            case .table: return "table"
             case .thematicBreak: return "hr"
             }
         }
@@ -298,5 +316,63 @@ struct MarkdownBlockParserTests {
 
     @Test func crlfLineEndingsParse() {
         #expect(kinds(MarkdownBlockParser.parse("# A\r\ntext")) == ["heading", "para"])
+    }
+
+    @Test func parsesPipeTable() {
+        let doc = """
+        | Name | Qty |
+        |:-----|----:|
+        | Apple | 3 |
+        | Pear | 12 |
+
+        After table.
+        """
+        #expect(kinds(MarkdownBlockParser.parse(doc)) == ["table", "para"])
+    }
+
+    @Test func tableHeaderAlignmentsAndRowsParse() {
+        let blocks = MarkdownBlockParser.parse("| A | B |\n|:--|:-:|\n| 1 | 2 |")
+        guard case .table(let header, let alignments, let rows)? = blocks.first else {
+            Issue.record("expected a table")
+            return
+        }
+        #expect(header == ["A", "B"])
+        #expect(alignments == [.left, .center])
+        #expect(rows == [["1", "2"]])
+    }
+
+    @Test func tableInsideCodeFenceStaysCode() {
+        let doc = "```\n| A |\n|---|\n```"
+        #expect(kinds(MarkdownBlockParser.parse(doc)) == ["code"])
+    }
+
+    @Test func missingDelimiterRowIsNotATable() {
+        let doc = "| A | B |\n| 1 | 2 |"
+        #expect(kinds(MarkdownBlockParser.parse(doc)).contains("table") == false)
+    }
+}
+
+struct MarkdownTableParserTests {
+    @Test func splitsRowsStripsBarsAndUnescapesPipes() {
+        let cells = MarkdownTableParser.splitRow("| left | mid \\| pipe | right |")
+        #expect(cells == ["left", "mid | pipe", "right"])
+    }
+
+    @Test func delimiterDetectsAlignments() {
+        #expect(MarkdownTableParser.delimiterAlignments(for: "|:---|:--:|---:|")
+                == [.left, .center, .right])
+        #expect(MarkdownTableParser.delimiterAlignments(for: "| a | b |") == nil)
+    }
+
+    @Test func raggedRowsPadAndTruncate() {
+        let lines = ["| A | B | C |", "|---|---|---|", "| 1 |", "| x | y | z | w |"]
+        guard let table = MarkdownTableParser.table(startingAt: 0, in: lines) else {
+            Issue.record("expected a table")
+            return
+        }
+        #expect(table.rows.count == 2)
+        #expect(table.rows[0] == ["1", "", ""])
+        #expect(table.rows[1] == ["x", "y", "z"])
+        #expect(table.nextIndex == lines.count)
     }
 }

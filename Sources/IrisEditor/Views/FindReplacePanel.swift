@@ -29,7 +29,7 @@ struct FindReplacePanel: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .frame(width: 470)
+        .frame(width: 560)
         .background {
             GlassBackdrop(style: .regular, cornerRadius: 16, interactive: true)
         }
@@ -64,6 +64,9 @@ struct FindReplacePanel: View {
                 .onSubmit {
                     appState.performFind(forward: true)
                 }
+
+            toggleOption("Aa", isOn: $appState.findCaseSensitive, help: "Match Case")
+            toggleOption("ab", isOn: $appState.findWholeWord, help: "Whole Word")
 
             Text(matchSummary)
                 .font(.system(size: 11))
@@ -163,6 +166,25 @@ struct FindReplacePanel: View {
 
             closeButton
         }
+    }
+
+    private func toggleOption(_ label: String, isOn: Binding<Bool>, help: String) -> some View {
+        Button {
+            isOn.wrappedValue.toggle()
+        } label: {
+            Text(label)
+                .font(.system(size: 10, weight: .bold))
+                .frame(width: 20, height: 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(isOn.wrappedValue
+                              ? Color.accentColor.opacity(0.25)
+                              : Color(nsColor: .quaternaryLabelColor).opacity(0.35))
+                )
+                .foregroundStyle(isOn.wrappedValue ? Color.accentColor : Color.secondary)
+        }
+        .buttonStyle(.borderless)
+        .help(help)
     }
 
     private var closeButton: some View {

@@ -4,19 +4,29 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var appState: AppState
 
+    /// 3×3 GFM pipe table inserted at the cursor.
+    static let tableTemplate = """
+    | Column 1 | Column 2 | Column 3 |
+    | -------- | -------- | -------- |
+    |          |          |          |
+    |          |          |          |
+    """
+
     var body: some View {
         ZStack {
             VisualEffectBackground()
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
+                TabBarView()
+
                 if appState.showFindReplace || appState.showGoToLine {
                     FindReplacePanel()
                         .padding(.top, 10)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
-                if !appState.showPreview {
+                if appState.viewMode != .preview {
                     markdownToolbar
                         .transition(.opacity)
                 }
@@ -74,11 +84,11 @@ struct ContentView: View {
                 .help("Go to Line (⌘G)")
 
                 Button {
-                    appState.showPreview.toggle()
+                    appState.viewMode = appState.viewMode.next
                 } label: {
-                    Label("Preview", systemImage: appState.showPreview ? "text.alignleft" : "doc.richtext")
+                    Label("Preview", systemImage: appState.viewMode.toolbarIcon)
                 }
-                .help(appState.showPreview ? "Edit Markdown" : "Preview Markdown")
+                .help(appState.viewMode.toolbarHelp)
             }
 
             ToolbarItem(placement: .primaryAction) {
@@ -90,7 +100,7 @@ struct ContentView: View {
         }
         .animation(.snappy(duration: 0.22), value: appState.showFindReplace)
         .animation(.snappy(duration: 0.22), value: appState.showGoToLine)
-        .animation(.snappy(duration: 0.22), value: appState.showPreview)
+        .animation(.snappy(duration: 0.22), value: appState.viewMode)
     }
 
     private var editorCard: some View {
@@ -98,24 +108,20 @@ struct ContentView: View {
             GlassBackdrop(style: .regular, cornerRadius: 14, interactive: true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if appState.showPreview {
+            switch appState.viewMode {
+            case .source:
+                sourcePane
+            case .preview:
                 MarkdownPreviewView(markdown: appState.document.text)
                     .clipShape(.rect(cornerRadius: 13))
-            } else {
-                TextEditorViewRepresentable(
-                    text: Binding(
-                        get: { appState.document.text },
-                        set: { newValue in
-                            guard appState.document.text != newValue else { return }
-                            appState.document.text = newValue
-                            appState.document.isDirty = true
-                        }
-                    ),
-                    settings: appState.settings
-                )
-                .padding(1)
+            case .split:
+                HSplitView {
+                    sourcePane
+                        .frame(minWidth: 280)
+                    MarkdownPreviewView(markdown: appState.document.text)
+                        .frame(minWidth: 280)
+                }
                 .clipShape(.rect(cornerRadius: 13))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .clipShape(.rect(cornerRadius: 14))
@@ -126,6 +132,23 @@ struct ContentView: View {
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 8)
+    }
+
+    private var sourcePane: some View {
+        TextEditorViewRepresentable(
+            text: Binding(
+                get: { appState.document.text },
+                set: { newValue in
+                    guard appState.document.text != newValue else { return }
+                    appState.document.text = newValue
+                    appState.document.isDirty = true
+                }
+            ),
+            settings: appState.settings
+        )
+        .padding(1)
+        .clipShape(.rect(cornerRadius: 13))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var markdownToolbar: some View {
@@ -152,6 +175,13 @@ struct ContentView: View {
                 Image(systemName: "text.quote")
             }
             .help("Block Quote")
+
+            Button {
+                appState.insertSnippet(Self.tableTemplate)
+            } label: {
+                Image(systemName: "tablecells")
+            }
+            .help("Insert Table")
 
             Spacer()
         }

@@ -28,6 +28,28 @@ struct IrisEditorApp: App {
                 .keyboardShortcut("o", modifiers: .command)
             }
 
+            CommandGroup(after: .newItem) {
+                Button("Close Tab") {
+                    appState.closeTab(at: appState.currentTabIndex)
+                }
+                .keyboardShortcut("w", modifiers: [.command, .option])
+
+                Divider()
+
+                Button("Next Tab") {
+                    appState.selectTab(at: (appState.currentTabIndex + 1) % appState.tabs.count)
+                }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+                .disabled(appState.tabs.count < 2)
+
+                Button("Previous Tab") {
+                    let count = appState.tabs.count
+                    appState.selectTab(at: (appState.currentTabIndex - 1 + count) % count)
+                }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
+                .disabled(appState.tabs.count < 2)
+            }
+
             CommandGroup(replacing: .saveItem) {
                 Button("Save") {
                     appState.saveDocument()
@@ -109,8 +131,14 @@ struct IrisEditorApp: App {
 
                 Divider()
 
+                Button("Insert Table") {
+                    appState.insertSnippet(ContentView.tableTemplate)
+                }
+
+                Divider()
+
                 Button("Toggle Preview") {
-                    appState.showPreview.toggle()
+                    appState.viewMode = appState.viewMode.next
                 }
                 .keyboardShortcut("p", modifiers: [.command, .shift])
             }
@@ -151,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        AppState.shared.confirmDiscardChanges() ? .terminateNow : .terminateCancel
+        AppState.shared.confirmDiscardAllTabs() ? .terminateNow : .terminateCancel
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

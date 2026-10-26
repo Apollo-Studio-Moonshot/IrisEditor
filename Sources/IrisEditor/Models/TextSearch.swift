@@ -1,18 +1,28 @@
 import Foundation
 
-/// Case-insensitive, non-overlapping plain-text search shared by the editor and tests.
+/// Plain-text search with optional case-sensitivity and whole-word matching,
+/// shared by the editor and tests.
 enum TextSearch {
-    static func nsRanges(of query: String, in text: String) -> [NSRange] {
+    static func nsRanges(
+        of query: String,
+        in text: String,
+        caseSensitive: Bool = false,
+        wholeWord: Bool = false
+    ) -> [NSRange] {
         guard !query.isEmpty else { return [] }
 
         let text = text as NSString
         var ranges: [NSRange] = []
         var searchRange = NSRange(location: 0, length: text.length)
+        let options: NSString.CompareOptions = caseSensitive ? [] : [.caseInsensitive]
 
         while searchRange.length > 0 {
-            let found = text.range(of: query, options: [.caseInsensitive], range: searchRange)
+            let found = text.range(of: query, options: options, range: searchRange)
             guard found.location != NSNotFound else { break }
-            ranges.append(found)
+
+            if !wholeWord || isWholeWordMatch(found, in: text) {
+                ranges.append(found)
+            }
 
             let nextLocation = NSMaxRange(found)
             guard nextLocation < text.length else { break }
@@ -24,6 +34,20 @@ enum TextSearch {
 
     static func ranges(of query: String, in text: String) -> [Range<String.Index>] {
         nsRanges(of: query, in: text).compactMap { Range($0, in: text) }
+    }
+
+    /// A match is a whole word when neither edge touches a letter, digit, or underscore.
+    private static func isWholeWordMatch(_ match: NSRange, in text: NSString) -> Bool {
+        func isWordCharacter(at index: Int) -> Bool {
+            guard index >= 0, index < text.length else { return false }
+            let scalar = text.character(at: index)
+            return (scalar >= 48 && scalar <= 57)   // 0-9
+                || (scalar >= 65 && scalar <= 90)   // A-Z
+                || (scalar >= 97 && scalar <= 122)  // a-z
+                || scalar == 95                     // _
+        }
+        return !isWordCharacter(at: match.location - 1)
+            && !isWordCharacter(at: NSMaxRange(match))
     }
 }
 
