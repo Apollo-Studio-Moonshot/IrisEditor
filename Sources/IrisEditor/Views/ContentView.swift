@@ -51,7 +51,7 @@ struct ContentView: View {
                 } label: {
                     Label("New", systemImage: "square.and.pencil")
                 }
-                .help("New Document (⌘N)")
+                .help("New Tab (⌘T)")
 
                 Button {
                     appState.openDocument()

@@ -19,10 +19,12 @@ Electron, no dependencies, and no project bloat.
   ATX and Setext headings, hard/soft line breaks, all emphasis combinations, nested
   block quotes, nested ordered/unordered lists with paragraphs/quotes/code, inline and
   indented/fenced code, rules, inline/reference/autolink links, images (local and remote),
-  escaping, inline HTML, HTML blocks, pipe **tables**, and nesting anywhere — cycling
+  escaping, inline HTML, HTML blocks (tables in HTML markup render as real tables), pipe
+  **tables**, and nesting anywhere — cycling
   through *source → split → preview* from the toolbar or `⇧⌘P`
-- **Editor tabs** — multiple documents open as tabs in one window: `⌘N` opens a new tab,
-  `⌥⌘W` closes the current tab (prompting to save), `⇧⌘[` / `⇧⌘]` cycle tabs, and
+- **Editor tabs** — multiple documents open as tabs in one window: `⌘T` opens a new tab,
+  `⌘W` closes the current tab (prompting to save; the last tab closes the window),
+  `⇧⌘[` / `⇧⌘]` cycle tabs, and
   opening a file already shown focuses its existing tab
 - **Markdown formatting** — Bold (`⌘B`), Italic (`⌘I`), Inline Code (`⌘K`),
   Strikethrough, Heading, Bulleted List, and Block Quote via the *Format* menu or a
@@ -81,11 +83,11 @@ swift test
 
 | Shortcut | Action |
 |---|---|
-| `⌘N` | New tab |
+| `⌘T` | New tab |
 | `⌘O` | Open… (multi-select) |
 | `⌘S` | Save |
 | `⇧⌘S` | Save As… |
-| `⌥⌘W` | Close Tab |
+| `⌘W` | Close Tab (closes the window on the last tab) |
 | `⇧⌘[` / `⇧⌘]` | Previous / Next Tab |
 | `⌘F` | Find & Replace |
 | `⌘G` | Go to Line… |

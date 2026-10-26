@@ -813,3 +813,88 @@ struct MarkdownInlineParserTests {
         #expect(inlines.plainText == "a b")
     }
 }
+
+struct MarkdownHTMLTableParserTests {
+    @Test func thRowBecomesHeader() {
+        let html = """
+        <table>
+        <tr><th>A</th><th>B</th></tr>
+        <tr><td>1</td><td>2</td></tr>
+        </table>
+        """
+        guard let table = MarkdownHTMLTableParser.table(in: html) else {
+            Issue.record("expected a table")
+            return
+        }
+        #expect(table.header == ["A", "B"])
+        #expect(table.rows == [["1", "2"]])
+    }
+
+    @Test func tdOnlyTableGetsEmptyHeader() {
+        let html = "<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>"
+        guard let table = MarkdownHTMLTableParser.table(in: html) else {
+            Issue.record("expected a table")
+            return
+        }
+        #expect(table.header == ["", ""])
+        #expect(table.rows == [["a", "b"], ["c", "d"]])
+    }
+
+    @Test func alignAttributesMapToColumnAlignment() {
+        let html = "<table><tr><th align=\"right\">N</th></tr><tr><td>42</td></tr></table>"
+        guard let table = MarkdownHTMLTableParser.table(in: html) else {
+            Issue.record("expected a table")
+            return
+        }
+        #expect(table.alignments == [.right])
+        #expect(table.rows == [["42"]])
+    }
+
+    @Test func cellMarkupReducesToVisibleText() {
+        let html = "<table><tr><th>X</th></tr><tr><td><b>bold</b> &amp; <i>more</i></td></tr></table>"
+        guard let table = MarkdownHTMLTableParser.table(in: html) else {
+            Issue.record("expected a table")
+            return
+        }
+        #expect(table.rows == [["bold & more"]])
+    }
+
+    @Test func raggedRowsPadToColumnCount() {
+        let html = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td></tr></table>"
+        guard let table = MarkdownHTMLTableParser.table(in: html) else {
+            Issue.record("expected a table")
+            return
+        }
+        #expect(table.rows == [["1", ""]])
+    }
+
+    @Test func malformedMarkupIsNotATable() {
+        #expect(MarkdownHTMLTableParser.table(in: "<table><tr><td>unclosed") == nil)
+        #expect(MarkdownHTMLTableParser.table(in: "<h1>hi</h1>") == nil)
+    }
+
+    @Test func blockParserPromotesHTMLTables() {
+        let doc = """
+        <table>
+        <tr><th>A</th><th>B</th></tr>
+        <tr><td>1</td><td>2</td></tr>
+        </table>
+        """
+        let blocks = MarkdownBlockParser.parse(doc)
+        guard case .table(let header, _, let rows)? = blocks.first else {
+            Issue.record("expected a table block")
+            return
+        }
+        #expect(header == ["A", "B"])
+        #expect(rows == [["1", "2"]])
+    }
+
+    @Test func nonTableHTMLStillParsesAsHTMLBlock() {
+        let blocks = MarkdownBlockParser.parse("<h1>Title</h1>\n<p>Body</p>")
+        guard case .htmlBlock(let lines)? = blocks.first else {
+            Issue.record("expected an HTML block")
+            return
+        }
+        #expect(lines == ["<h1>Title</h1>", "<p>Body</p>"])
+    }
+}

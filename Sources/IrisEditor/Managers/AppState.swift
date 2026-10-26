@@ -42,6 +42,10 @@ final class AppState: ObservableObject {
     /// Open documents, one per editor tab.
     @Published private(set) var tabs: [EditorDocument] = []
 
+    /// The editor window hosting the tab strip, adopted via `WindowConfigurator` so
+    /// closing the last tab closes that window even when another window holds focus.
+    weak var editorWindow: NSWindow?
+
     /// Index of the active tab in `tabs`.
     @Published private(set) var currentTabIndex = 0
 
@@ -137,8 +141,8 @@ final class AppState: ObservableObject {
         document = tabs[index]
     }
 
-    /// Closes a tab. Prompts to save when its document is dirty; the last tab closes
-    /// as a fresh untitled document so the window always has an editing surface.
+    /// Closes a tab. Prompts to save when its document is dirty; closing the last tab
+    /// closes the window itself instead of trapping the user behind a rebuilt empty tab.
     func closeTab(at index: Int) {
         guard tabs.indices.contains(index) else { return }
         let target = tabs[index]
@@ -152,7 +156,7 @@ final class AppState: ObservableObject {
         }
 
         if tabs.isEmpty {
-            newDocument()
+            (editorWindow ?? NSApp.keyWindow)?.close()
             return
         }
 

@@ -42,6 +42,7 @@ struct WindowConfigurator: NSViewRepresentable {
     }
 
     private func configure(_ window: NSWindow) {
+        AppState.shared.editorWindow = window
         window.title = displayName
         window.representedURL = fileURL
         window.isDocumentEdited = isDirty

@@ -188,7 +188,8 @@ enum MarkdownBlockParser {
                 continue
             }
 
-            // Block-level HTML.
+            // Block-level HTML. HTML tables render as real tables; other markup
+            // stays a code surface showing its source.
             if isHTMLBlockStart(contentTrimmed) {
                 var htmlLines: [String] = []
                 while index < lines.count {
@@ -197,7 +198,17 @@ enum MarkdownBlockParser {
                     htmlLines.append(stripLeadingWhitespace(htmlRaw))
                     index += 1
                 }
-                blocks.append(.htmlBlock(lines: htmlLines))
+                if let htmlTable = MarkdownHTMLTableParser.table(
+                    in: htmlLines.joined(separator: "\n")
+                ) {
+                    blocks.append(.table(
+                        header: htmlTable.header,
+                        alignments: htmlTable.alignments,
+                        rows: htmlTable.rows
+                    ))
+                } else {
+                    blocks.append(.htmlBlock(lines: htmlLines))
+                }
                 continue
             }
 
@@ -720,3 +731,153 @@ enum MarkdownTableParser {
         return alignments
     }
 }
+
+/// Extracts a table from block-level HTML (`<table>…</table>` with `<tr>` / `<td>` /
+/// `<th>` rows) so the preview renders real tables instead of raw markup.
+///
+/// The first row becomes the header when it uses `<th>` cells; `align` attributes and
+/// inline `text-align` styles map to column alignments. Anything that does not look
+/// like a well-formed table returns nil and stays an HTML code block.
+enum MarkdownHTMLTableParser {
+    struct Table {
+        let header: [String]
+        let alignments: [MarkdownTableAlignment]
+        let rows: [[String]]
+    }
+
+    static func table(in html: String) -> Table? {
+        guard let body = substring(of: "<table[^>]*>([\\s\\S]*?)</table>", in: html, group: 1)
+        else { return nil }
+
+        struct Row {
+            let cells: [String]
+            let allHeader: Bool
+            let alignments: [MarkdownTableAlignment?]
+        }
+
+        var rows: [Row] = []
+        for rowHTML in captured(of: "<tr[^>]*>([\\s\\S]*?)</tr>", in: body) {
+            var cells: [String] = []
+            var headerFlags: [Bool] = []
+            var aligns: [MarkdownTableAlignment?] = []
+
+            for result in matches(of: "<(th|td)\\b([^>]*)>([\\s\\S]*?)</\\1>", in: rowHTML) {
+                let tag = capturedGroup(1, in: result, from: rowHTML)?.lowercased()
+                let attributes = capturedGroup(2, in: result, from: rowHTML) ?? ""
+                let inner = capturedGroup(3, in: result, from: rowHTML) ?? ""
+                cells.append(text(from: inner))
+                headerFlags.append(tag == "th")
+                aligns.append(alignment(in: attributes))
+            }
+
+            if !cells.isEmpty {
+                rows.append(Row(
+                    cells: cells,
+                    allHeader: !headerFlags.isEmpty && headerFlags.allSatisfy { $0 },
+                    alignments: aligns
+                ))
+            }
+        }
+
+        guard !rows.isEmpty else { return nil }
+        let columnCount = rows.map { $0.cells.count }.max() ?? 0
+        guard columnCount > 0 else { return nil }
+
+        // The first row is the header when every one of its cells is a <th> and more
+        // rows follow; otherwise the table has no header and gets an empty one.
+        var headerCells = Array(repeating: "", count: columnCount)
+        var alignSource = rows.first?.alignments ?? []
+        var dataRows = rows.map { $0.cells }
+        if rows.count > 1, rows[0].allHeader {
+            headerCells = rows[0].cells
+            alignSource = rows[0].alignments
+            dataRows = Array(rows.dropFirst().map { $0.cells })
+        }
+
+        var alignments: [MarkdownTableAlignment] = []
+        for column in 0..<columnCount {
+            if column < alignSource.count, let alignment = alignSource[column] {
+                alignments.append(alignment)
+            } else {
+                alignments.append(.left)
+            }
+        }
+
+        return Table(
+            header: normalize(headerCells, to: columnCount),
+            alignments: alignments,
+            rows: dataRows.map { normalize($0, to: columnCount) }
+        )
+    }
+
+    /// Pads or truncates a row to the table width, like GFM renderers do.
+    private static func normalize(_ cells: [String], to count: Int) -> [String] {
+        if cells.count < count {
+            return cells + Array(repeating: "", count: count - cells.count)
+        }
+        return Array(cells.prefix(count))
+    }
+
+    private static func alignment(in attributes: String) -> MarkdownTableAlignment? {
+        let value = substring(of: "align\\s*=\\s*[\"']?\\s*(left|center|right)", in: attributes, group: 1)
+            ?? substring(of: "text-align\\s*:\\s*(left|center|right)", in: attributes, group: 1)
+        switch value?.lowercased() {
+        case "center": return .center
+        case "right": return .right
+        case "left": return .left
+        default: return nil
+        }
+    }
+
+    /// Reduces cell markup to its visible text: nested tags are stripped and common
+    /// entities decoded, so cells read like the surrounding Markdown preview.
+    /// Entities are decoded after tag stripping so encoded markup stays plain text.
+    private static func text(from html: String) -> String {
+        var result = html
+        result = result.replacingOccurrences(
+            of: "<br\\s*/?>", with: " ", options: [.regularExpression, .caseInsensitive])
+        result = result.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        result = result
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&amp;", with: "&")
+        return result
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+    }
+
+    // MARK: - Regex helpers
+
+    private static func matches(of pattern: String, in text: String) -> [NSTextCheckingResult] {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+            return []
+        }
+        let nsText = text as NSString
+        return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+    }
+
+    private static func captured(of pattern: String, in text: String) -> [String] {
+        matches(of: pattern, in: text).compactMap { capturedGroup(1, in: $0, from: text) }
+    }
+
+    private static func substring(of pattern: String, in text: String, group: Int) -> String? {
+        matches(of: pattern, in: text).first.flatMap { capturedGroup(group, in: $0, from: text) }
+    }
+
+    private static func capturedGroup(
+        _ index: Int,
+        in result: NSTextCheckingResult,
+        from text: String
+    ) -> String? {
+        guard index < result.numberOfRanges else { return nil }
+        let nsRange = result.range(at: index)
+        guard nsRange.location != NSNotFound, let range = Range(nsRange, in: text) else {
+            return nil
+        }
+        return String(text[range])
+    }
+}
+

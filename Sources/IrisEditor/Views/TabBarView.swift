@@ -29,7 +29,7 @@ struct TabBarView: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.borderless)
-            .help("New Tab (⌘N)")
+            .help("New Tab (⌘T)")
             .padding(.trailing, 8)
 
             Spacer(minLength: 0)
