@@ -60,7 +60,13 @@ final class AppState: ObservableObject {
         }
     }
 
-    @Published var settings = EditorSettings.load()
+    @Published var settings = EditorSettings.load() {
+        didSet {
+            if oldValue.aiConfiguration != settings.aiConfiguration {
+                ai.apply(configuration: settings.aiConfiguration)
+            }
+        }
+    }
 
     @Published private(set) var cursorLine = 1
     @Published private(set) var cursorColumn = 1
@@ -189,6 +195,7 @@ final class AppState: ObservableObject {
     private var isUpdatingPanels = false
 
     private init() {
+        ai.apply(configuration: settings.aiConfiguration)
         if let stored = UserDefaults.standard.string(forKey: Self.vaultRootDefaultsKey) {
             vaultRootURL = URL(fileURLWithPath: stored)
         }

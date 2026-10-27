@@ -121,6 +121,9 @@ struct EditorSettings: Codable, Equatable {
     /// Command id → canonical shortcut string, e.g. `"zenMode": "control+command+z"`.
     var keybindingOverrides: [String: String] = [:]
 
+    /// AI backend used by the writing assistant.
+    var aiConfiguration = AIProviderConfiguration()
+
     static let defaultFontSize: Double = 14
 
     static let fontFamilies = [
@@ -155,7 +158,7 @@ struct EditorSettings: Codable, Equatable {
         case fontFamily, fontSize, tabWidth, highlightCurrentLine
         case showLineNumbers, wordWrap, accent, previewTheme
         case typewriterMode, focusMode, smartTableNavigation, wikiAutocomplete
-        case keybindingOverrides
+        case keybindingOverrides, aiConfiguration
     }
 
     init(from decoder: Decoder) throws {
@@ -189,17 +192,27 @@ struct EditorSettings: Codable, Equatable {
             [String: String].self,
             forKey: .keybindingOverrides
         ) ?? defaults.keybindingOverrides
+        aiConfiguration = try container.decodeIfPresent(
+            AIProviderConfiguration.self,
+            forKey: .aiConfiguration
+        ) ?? defaults.aiConfiguration
     }
 
     static func load() -> EditorSettings {
-        guard let data = UserDefaults.standard.data(forKey: "IrisEditor.Settings"),
-              let settings = try? JSONDecoder().decode(EditorSettings.self, from: data) else {
-            return EditorSettings()
+        var settings: EditorSettings
+        if let data = UserDefaults.standard.data(forKey: "IrisEditor.Settings"),
+           let decoded = try? JSONDecoder().decode(EditorSettings.self, from: data) {
+            settings = decoded
+        } else {
+            settings = EditorSettings()
         }
+        // The API key lives in the Keychain, never in the UserDefaults payload.
+        settings.aiConfiguration.apiKey = AICredentialStore.loadAPIKey()
         return settings
     }
 
     func save() {
+        AICredentialStore.saveAPIKey(aiConfiguration.apiKey)
         guard let data = try? JSONEncoder().encode(self) else { return }
         UserDefaults.standard.set(data, forKey: "IrisEditor.Settings")
     }

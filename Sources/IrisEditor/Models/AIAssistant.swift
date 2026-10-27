@@ -5,11 +5,13 @@ import Foundation
 import FoundationModels
 #endif
 
-/// On-device writing assistant backed by Apple Intelligence (Foundation Models).
+/// Writing assistant that runs either on-device with Apple Intelligence
+/// (Foundation Models) or against a linked remote provider (DeepSeek, OpenAI,
+/// Anthropic, or a custom OpenAI-compatible endpoint).
 ///
-/// The service is available on macOS 26 and later when Apple Intelligence is
-/// enabled. Every other configuration reports `isAvailable == false` and all
-/// generation methods throw `AIUnavailableError`.
+/// The active backend comes from `configuration`, which `AppState` keeps in sync
+/// with Settings. Generation methods throw `AIUnavailableError` when the selected
+/// backend is not usable.
 @MainActor
 final class AIAssistant: ObservableObject {
     static let shared = AIAssistant()
@@ -22,9 +24,13 @@ final class AIAssistant: ObservableObject {
     }
 
     struct AIUnavailableError: LocalizedError {
-        var errorDescription: String? {
-            "Apple Intelligence is not available on this Mac. Enable it in System Settings › Apple Intelligence & Siri."
+        let message: String
+
+        init(message: String = "Apple Intelligence is not available on this Mac. Enable it in System Settings › Apple Intelligence & Siri.") {
+            self.message = message
         }
+
+        var errorDescription: String? { message }
     }
 
     private enum AvailabilityStatus: Sendable {
@@ -32,17 +38,30 @@ final class AIAssistant: ObservableObject {
         case unavailable(reason: String)
     }
 
-    private let status: AvailabilityStatus
+    private let localStatus: AvailabilityStatus
 
-    /// True when Apple Intelligence / Foundation Models is usable on this machine.
+    /// Selected provider plus its endpoint, model, and key. Kept in sync by `AppState`.
+    @Published private(set) var configuration = AIProviderConfiguration()
+
+    /// True when the selected provider can be used right now.
     var isAvailable: Bool {
-        if case .available = status { return true }
+        if configuration.provider.isRemote {
+            return configuration.isConfigured
+        }
+        if case .available = localStatus { return true }
         return false
     }
 
     /// Human-readable status for Settings/empty states.
     var availabilityDescription: String {
-        switch status {
+        if configuration.provider.isRemote {
+            guard configuration.isConfigured else {
+                return "Add an API key for \(configuration.provider.title) in Settings › AI Provider."
+            }
+            return "\(configuration.provider.title) · \(configuration.effectiveModel)"
+        }
+
+        switch localStatus {
         case .available:
             return "Apple Intelligence is available on this Mac."
         case .unavailable(let reason):
@@ -51,129 +70,202 @@ final class AIAssistant: ObservableObject {
     }
 
     private init() {
-        status = AIAssistant.resolveAvailability()
+        localStatus = AIAssistant.resolveAvailability()
+    }
+
+    /// Applies the provider chosen in Settings.
+    func apply(configuration: AIProviderConfiguration) {
+        guard configuration != self.configuration else { return }
+        self.configuration = configuration
+    }
+
+    private func unavailableError() -> AIUnavailableError {
+        if configuration.provider.isRemote {
+            return AIUnavailableError(
+                message: "Add an API key for \(configuration.provider.title) in Settings › AI Provider."
+            )
+        }
+        if case .unavailable(let reason) = localStatus {
+            return AIUnavailableError(message: reason)
+        }
+        return AIUnavailableError()
     }
 
     // MARK: - Generation
 
     /// Continue the sentence at the caret. Returns at most `maxWords` words; empty when unavailable.
     func complete(before: String, after: String, maxWords: Int = 12) async throws -> String {
-        guard isAvailable, maxWords > 0 else { return "" }
+        guard maxWords > 0 else { return "" }
+        guard isAvailable else { throw unavailableError() }
+
+        let context = Self.caretContext(before: before, after: after)
+        let prompt = """
+        Continue the text exactly at the <cursor> marker. Reply with only the words \
+        that follow, using at most \(maxWords) words.
+
+        <before_cursor>
+        \(context.before)
+        </before_cursor>
+        <cursor>
+        <after_cursor>
+        \(context.after)
+        </after_cursor>
+        """
+
+        if configuration.provider.isRemote {
+            let response = try await AIProviderClient.respond(
+                configuration: configuration,
+                system: Self.completionInstructions,
+                prompt: prompt
+            )
+            return Self.sanitizedCompletion(response, maxWords: maxWords)
+        }
 
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
-            let session = LanguageModelSession(instructions: """
-            You are a concise writing assistant inside a Markdown editor. \
-            Reply with only the continuation of the user's text, without quotes, \
-            labels, or explanation, on a single line.
-            """)
-
-            let context = Self.caretContext(before: before, after: after)
-            let prompt = """
-            Continue the text exactly at the <cursor> marker. Reply with only the words \
-            that follow, using at most \(maxWords) words.
-
-            <before_cursor>
-            \(context.before)
-            </before_cursor>
-            <cursor>
-            <after_cursor>
-            \(context.after)
-            </after_cursor>
-            """
-
+            let session = LanguageModelSession(instructions: Self.completionInstructions)
             let response = try await session.respond(to: prompt)
             return Self.sanitizedCompletion(response.content, maxWords: maxWords)
         }
         #endif
 
-        throw AIUnavailableError()
+        throw unavailableError()
     }
 
     /// Rewrite selected text according to a plain-English instruction.
     func rewrite(_ text: String, instruction: String?) async throws -> String {
-        guard isAvailable else { throw AIUnavailableError() }
+        guard isAvailable else { throw unavailableError() }
 
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            let session = LanguageModelSession(instructions: """
-            You are a concise writing assistant inside a Markdown editor. \
-            Reply with only the requested text, preserving Markdown formatting where possible.
-            """)
+        let directive = instruction?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let task = (directive?.isEmpty == false)
+            ? "Rewrite the text using this instruction: \(directive!)"
+            : "Rewrite the text to be clearer and more concise."
+        let prompt = """
+        \(task)
+        Return only the rewritten text, without explanations or surrounding quotes.
 
-            let directive = instruction?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let task = (directive?.isEmpty == false)
-                ? "Rewrite the text using this instruction: \(directive!)"
-                : "Rewrite the text to be clearer and more concise."
-            let prompt = """
-            \(task)
-            Return only the rewritten text, without explanations or surrounding quotes.
+        \(text)
+        """
 
-            \(text)
-            """
-
-            let response = try await session.respond(to: prompt)
-            let result = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            return result.isEmpty ? text : result
+        let result: String
+        if configuration.provider.isRemote {
+            result = try await AIProviderClient.respond(
+                configuration: configuration,
+                system: Self.rewriteInstructions,
+                prompt: prompt
+            )
+        } else {
+            #if canImport(FoundationModels)
+            if #available(macOS 26.0, *) {
+                let session = LanguageModelSession(instructions: Self.rewriteInstructions)
+                let response = try await session.respond(to: prompt)
+                result = response.content
+            } else {
+                throw unavailableError()
+            }
+            #else
+            throw unavailableError()
+            #endif
         }
-        #endif
 
-        throw AIUnavailableError()
+        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? text : trimmed
     }
 
     /// Summarize a whole document.
     func summarize(_ text: String) async throws -> String {
-        guard isAvailable else { throw AIUnavailableError() }
+        guard isAvailable else { throw unavailableError() }
 
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            let session = LanguageModelSession(instructions: """
-            You are a concise writing assistant inside a Markdown editor. \
-            Reply with only the requested summary as plain Markdown-compatible prose.
-            """)
+        let prompt = """
+        Summarize the following document in at most five sentences. \
+        Return only the summary, without a heading, quotes, or commentary.
 
-            let prompt = """
-            Summarize the following document in at most five sentences. \
-            Return only the summary, without a heading, quotes, or commentary.
+        \(text)
+        """
 
-            \(text)
-            """
-
-            let response = try await session.respond(to: prompt)
-            return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let result: String
+        if configuration.provider.isRemote {
+            result = try await AIProviderClient.respond(
+                configuration: configuration,
+                system: Self.summaryInstructions,
+                prompt: prompt
+            )
+        } else {
+            #if canImport(FoundationModels)
+            if #available(macOS 26.0, *) {
+                let session = LanguageModelSession(instructions: Self.summaryInstructions)
+                let response = try await session.respond(to: prompt)
+                result = response.content
+            } else {
+                throw unavailableError()
+            }
+            #else
+            throw unavailableError()
+            #endif
         }
-        #endif
 
-        throw AIUnavailableError()
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Generate a title and up to 5 tags.
     func titleAndTags(for text: String) async throws -> (title: String, tags: [String]) {
-        guard isAvailable else { throw AIUnavailableError() }
+        guard isAvailable else { throw unavailableError() }
 
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            let session = LanguageModelSession(instructions: """
-            You are a concise writing assistant inside a Markdown editor. \
-            Reply with only the requested JSON object, without prose or code fences.
-            """)
+        let prompt = """
+        Create a title of at most eight words and up to five lowercase tags for \
+        the document below. Reply with only JSON in this exact shape:
+        {"title": "...", "tags": ["...", "..."]}
 
-            let prompt = """
-            Create a title of at most eight words and up to five lowercase tags for \
-            the document below. Reply with only JSON in this exact shape:
-            {"title": "...", "tags": ["...", "..."]}
+        Document:
+        \(text)
+        """
 
-            Document:
-            \(text)
-            """
-
-            let response = try await session.respond(to: prompt)
-            return Self.parseTitleAndTags(response.content, fallbackText: text)
+        let result: String
+        if configuration.provider.isRemote {
+            result = try await AIProviderClient.respond(
+                configuration: configuration,
+                system: Self.metadataInstructions,
+                prompt: prompt
+            )
+        } else {
+            #if canImport(FoundationModels)
+            if #available(macOS 26.0, *) {
+                let session = LanguageModelSession(instructions: Self.metadataInstructions)
+                let response = try await session.respond(to: prompt)
+                result = response.content
+            } else {
+                throw unavailableError()
+            }
+            #else
+            throw unavailableError()
+            #endif
         }
-        #endif
 
-        throw AIUnavailableError()
+        return Self.parseTitleAndTags(result, fallbackText: text)
     }
+
+    // MARK: - Prompt instructions
+
+    private static let completionInstructions = """
+    You are a concise writing assistant inside a Markdown editor. \
+    Reply with only the continuation of the user's text, without quotes, \
+    labels, or explanation, on a single line.
+    """
+
+    private static let rewriteInstructions = """
+    You are a concise writing assistant inside a Markdown editor. \
+    Reply with only the requested text, preserving Markdown formatting where possible.
+    """
+
+    private static let summaryInstructions = """
+    You are a concise writing assistant inside a Markdown editor. \
+    Reply with only the requested summary as plain Markdown-compatible prose.
+    """
+
+    private static let metadataInstructions = """
+    You are a concise writing assistant inside a Markdown editor. \
+    Reply with only the requested JSON object, without prose or code fences.
+    """
 
     // MARK: - Availability
 

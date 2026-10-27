@@ -87,7 +87,45 @@ struct SettingsView: View {
                 .disabled(appState.document.fileURL == nil)
             }
 
-            Section(L10n.appleIntelligence) {
+            Section(L10n.aiProvider) {
+                Picker(L10n.provider, selection: $appState.settings.aiConfiguration.provider) {
+                    ForEach(AIProvider.allCases) { provider in
+                        Text(provider.title).tag(provider)
+                    }
+                }
+                .pickerStyle(.menu)
+                .onChange(of: appState.settings.aiConfiguration.provider) { _, newProvider in
+                    appState.settings.aiConfiguration.model = ""
+                    appState.settings.aiConfiguration.baseURL = ""
+                    if newProvider.isRemote {
+                        appState.settings.aiConfiguration.model = newProvider.defaultModel
+                        appState.settings.aiConfiguration.baseURL = newProvider.defaultBaseURL
+                    }
+                }
+
+                if appState.settings.aiConfiguration.provider.isRemote {
+                    SecureField(L10n.apiKey, text: $appState.settings.aiConfiguration.apiKey)
+                        .accessibilityIdentifier("Settings.AIAPIKey")
+
+                    TextField(
+                        L10n.model,
+                        text: $appState.settings.aiConfiguration.model,
+                        prompt: Text(appState.settings.aiConfiguration.provider.defaultModel)
+                    )
+                    .accessibilityIdentifier("Settings.AIModel")
+
+                    TextField(
+                        L10n.baseURL,
+                        text: $appState.settings.aiConfiguration.baseURL,
+                        prompt: Text(appState.settings.aiConfiguration.provider.defaultBaseURL)
+                    )
+                    .accessibilityIdentifier("Settings.AIBaseURL")
+
+                    Text(L10n.apiKeyKeychainNote)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
                 HStack(spacing: 6) {
                     Circle()
                         .fill(appState.ai.isAvailable ? Color.green : Color.secondary.opacity(0.5))
