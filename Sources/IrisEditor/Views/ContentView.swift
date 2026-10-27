@@ -26,6 +26,9 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     if appState.showOutline && !appState.isZenMode {
                         SidebarView()
+                            .padding(.leading, 12)
+                            .padding(.top, 10)
+                            .padding(.bottom, 8)
                             .transition(.move(edge: .leading).combined(with: .opacity))
                     }
 

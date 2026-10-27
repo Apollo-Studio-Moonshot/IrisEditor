@@ -14,12 +14,12 @@ struct SidebarView: View {
         }
         .frame(width: 250)
         .background {
-            GlassBackdrop(style: .regular, cornerRadius: 0, interactive: true)
+            GlassBackdrop(style: .regular, cornerRadius: 14, interactive: true)
         }
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor).opacity(0.6))
-                .frame(width: 0.5)
+        .clipShape(.rect(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.7), lineWidth: 0.5)
         }
         .task {
             appState.refreshVaultIfNeeded()
