@@ -4,8 +4,11 @@ import UniformTypeIdentifiers
 
 /// Markdown-specific file type identifiers shared across open/save panels and file naming.
 enum MarkdownFileType {
-    /// A Markdown document (`public.markdown`).
-    static let markdown = UTType(exportedAs: "public.markdown", conformingTo: .plainText)
+    /// The system Markdown type used by Finder, Quick Look, and other editors.
+    static let markdown = UTType(
+        importedAs: "net.daringfireball.markdown",
+        conformingTo: .plainText
+    )
 
     /// The set of content types Iris treats as editable Markdown.
     static var editable: [UTType] {
@@ -29,75 +32,112 @@ enum MarkdownPlainText {
         stripped(text).count
     }
 
-    /// Removes the common Markdown syntax characters without a full parser.
+    /// Removes block markers and inline Markdown so statistics count only visible text.
+    ///
+    /// Inline spans are resolved with the same parser the preview uses, so intraword
+    /// underscores (`snake_case`), escaped markers (`\*`), and link targets (`[label](url)`) are
+    /// preserved/counted exactly as they render. Fenced code content is kept verbatim so its
+    /// code is counted while its fence markers are not.
     static func stripped(_ text: String) -> String {
-        var result = text
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let lines = normalized.components(separatedBy: "\n")
 
-        // Obsidian-style wiki links: keep the visible label, not the brackets/target.
-        result = result.replacingOccurrences(
-            of: #"\[\[[^\]\n|]+\|([^\]\n]+)\]\]"#,
-            with: "$1",
-            options: .regularExpression
-        )
-        result = result.replacingOccurrences(
-            of: #"\[\[([^\]\n]+)\]\]"#,
-            with: "$1",
-            options: .regularExpression
-        )
+        var result: [String] = []
+        var fenceMarker: String?
 
-        // Inline code markers (backticks).
-        result = result.replacingOccurrences(of: "`", with: "")
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-        // Emphasis and strong markers.
-        result = result.replacingOccurrences(of: "**", with: "")
-        result = result.replacingOccurrences(of: "__", with: "")
-        result = result.replacingOccurrences(of: "~~", with: "")
-        result = result.replacingOccurrences(of: "*", with: "")
-        result = result.replacingOccurrences(of: "_", with: "")
-
-        // Strip line-lead markers (headings, quotes, lists, fences) on a per-line basis so
-        // we don't rely on regex line anchors.
-        let lines = result.components(separatedBy: "\n")
-        let cleaned = lines.map { line -> String in
-            var line = line
-            line = line.trimmingCharacters(in: .whitespaces)
-
-            // Fenced code blocks.
-            if line.hasPrefix("```") || line.hasPrefix("~~~") {
-                return ""
-            }
-
-            // Headings.
-            let headingCount = line.prefix { $0 == "#" }.count
-            if headingCount > 0, headingCount <= 6 {
-                let trimmed = line.dropFirst(headingCount)
-                line = String(trimmed).trimmingCharacters(in: .whitespaces)
-            }
-
-            // Block quote.
-            if line.hasPrefix(">") {
-                line = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
-            }
-
-            // Unordered list.
-            if line.hasPrefix("-") || line.hasPrefix("*") || line.hasPrefix("+") {
-                line = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
-            }
-
-            // Ordered list.
-            if let dotIndex = line.firstIndex(where: { $0 == "." || $0 == ")" }),
-               line[line.startIndex] >= "0" && line[line.startIndex] <= "9" {
-                let prefix = line[line.startIndex...dotIndex]
-                if prefix.allSatisfy({ $0.isNumber || $0 == "." || $0 == ")" }) {
-                    line = String(line[line.index(after: dotIndex)...]).trimmingCharacters(in: .whitespaces)
+            if let marker = fenceMarker {
+                if trimmed.hasPrefix(marker) {
+                    fenceMarker = nil
+                } else {
+                    result.append(line)
                 }
+                continue
             }
 
-            return line
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+                fenceMarker = String(trimmed.prefix(3))
+                continue
+            }
+
+            // Thematic breaks and Setext underlines carry no visible content.
+            if isRuleLine(trimmed) {
+                continue
+            }
+
+            let content = stripBlockPrefix(from: trimmed)
+            guard !content.isEmpty else {
+                result.append("")
+                continue
+            }
+
+            result.append(MarkdownInlineParser().parse(content).plainText)
         }
 
-        result = cleaned.joined(separator: "\n")
-        return result
+        return result.joined(separator: "\n")
+    }
+
+    /// Removes one level of heading, quote, list, or task-list marker from a line.
+    private static func stripBlockPrefix(from line: String) -> String {
+        var content = line
+
+        // Headings: 1-6 hashes followed by whitespace.
+        let headingHashes = content.prefix { $0 == "#" }.count
+        if (1...6).contains(headingHashes) {
+            let rest = content.dropFirst(headingHashes)
+            if rest.first == " " || rest.first == "\t" {
+                content = String(rest).trimmingCharacters(in: .whitespaces)
+            }
+        }
+
+        // Block quotes (possibly nested).
+        while content.hasPrefix(">") {
+            content = String(content.dropFirst()).trimmingCharacters(in: .whitespaces)
+        }
+
+        // Unordered lists and task-list checkboxes.
+        if let first = content.first, "-*+".contains(first) {
+            let rest = content.dropFirst()
+            if rest.first == " " || rest.first == "\t" {
+                content = String(rest).trimmingCharacters(in: .whitespaces)
+                if let marker = content.first, marker == "[", content.count >= 3 {
+                    let status = content[content.index(after: content.startIndex)]
+                    let close = content[content.index(content.startIndex, offsetBy: 2)]
+                    if close == "]", status == " " || status == "x" || status == "X" {
+                        content = String(content.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+                    }
+                }
+            }
+        }
+
+        // Ordered lists: digits followed by '.' or ')' and whitespace.
+        let digits = content.prefix { $0.isNumber }
+        if !digits.isEmpty, content.count > digits.count {
+            let delimiter = content[content.index(content.startIndex, offsetBy: digits.count)]
+            if delimiter == "." || delimiter == ")" {
+                let rest = content.dropFirst(digits.count + 1)
+                if rest.first == " " || rest.first == "\t" {
+                    content = String(rest).trimmingCharacters(in: .whitespaces)
+                }
+            }
+        }
+
+        return content
+    }
+
+    /// A thematic break or Setext underline made entirely of one marker character.
+    private static func isRuleLine(_ trimmed: String) -> Bool {
+        let compact = trimmed.replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "\t", with: "")
+        guard compact.count >= 2, let first = compact.first,
+              "-=*_".contains(first) else {
+            return false
+        }
+        return compact.allSatisfy { $0 == first }
     }
 }
 
@@ -200,10 +240,11 @@ enum MarkdownHighlighter {
         let base = lineRange.location
         let leadingWhitespace = countLeadingWhitespace(in: nsLine)
 
-        // Headings: 1-6 # marks followed by a space or end-of-line.
-        if let headingCount = leadingHeadingCount(in: nsLine) {
+        // Headings: 1-6 # marks (after up to three spaces) followed by whitespace/EOL.
+        if leadingWhitespace <= 3,
+           let headingCount = leadingHeadingCount(in: nsLine, from: leadingWhitespace) {
             result.append(Highlight(nsRange: lineRange, token: .heading))
-            let contentStart = headingCount
+            let contentStart = leadingWhitespace + headingCount
             let remainder = NSRange(
                 location: contentStart,
                 length: max(0, nsLine.length - contentStart)
@@ -212,14 +253,26 @@ enum MarkdownHighlighter {
             return
         }
 
-        // Block quotes.
+        // Block quotes, including nested `> >` markers. Inline content after the marker
+        // is still scanned so emphasis and links inside quotes stay highlighted.
         let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if trimmed.hasPrefix(">") {
-            let markerLength = countRun(of: 62, in: nsLine, from: leadingWhitespace) // '>'
+        if leadingWhitespace <= 3, trimmed.hasPrefix(">") {
+            var cursor = leadingWhitespace
+            while cursor < nsLine.length, nsLine.character(at: cursor) == 62 { // '>'
+                cursor += 1
+                if cursor < nsLine.length {
+                    let next = nsLine.character(at: cursor)
+                    if next == 32 || next == 9 {
+                        cursor += 1
+                    }
+                }
+            }
             result.append(Highlight(
-                nsRange: NSRange(location: base + leadingWhitespace, length: markerLength),
+                nsRange: NSRange(location: base + leadingWhitespace, length: cursor - leadingWhitespace),
                 token: .blockquote
             ))
+            let remainder = NSRange(location: cursor, length: max(0, nsLine.length - cursor))
+            scanInline(nsLine, contentRange: remainder, base: base, into: &result)
             return
         }
 
@@ -259,15 +312,16 @@ enum MarkdownHighlighter {
         return i
     }
 
-    private static func leadingHeadingCount(in ns: NSString) -> Int? {
-        var i = 0
-        while i < min(6, ns.length), ns.character(at: i) == 35 { i += 1 } // '#'
-        guard i > 0 else { return nil }
+    private static func leadingHeadingCount(in ns: NSString, from start: Int) -> Int? {
+        var i = start
+        while i < min(start + 6, ns.length), ns.character(at: i) == 35 { i += 1 } // '#'
+        let count = i - start
+        guard count > 0 else { return nil }
         if i < ns.length {
             let next = ns.character(at: i)
             if next != 32 && next != 9 { return nil } // must be followed by space/tab/EOL
         }
-        return i
+        return count
     }
 
     private static func countRun(of target: unichar, in ns: NSString, from start: Int) -> Int {

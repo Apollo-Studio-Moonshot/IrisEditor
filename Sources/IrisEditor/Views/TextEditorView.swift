@@ -498,11 +498,50 @@ final class IrisTextView: NSTextView {
         postCursorPosition()
     }
 
-    // MARK: - Tab insertion
+    // MARK: - Typing
 
     override func insertTab(_ sender: Any?) {
         let spaces = String(repeating: " ", count: max(1, settings.tabWidth))
         insertText(spaces, replacementRange: selectedRange())
+    }
+
+    /// Continues Markdown lists and block quotes when Return is pressed. On an empty
+    /// item the marker is removed instead, so Return exits the container.
+    override func insertNewline(_ sender: Any?) {
+        let selection = selectedRange()
+        guard selection.length == 0 else {
+            super.insertNewline(sender)
+            return
+        }
+
+        let ns = string as NSString
+        let lineRange = ns.lineRange(for: NSRange(location: selection.location, length: 0))
+        var line = ns.substring(with: lineRange)
+        while line.hasSuffix("\n") || line.hasSuffix("\r") {
+            line.removeLast()
+        }
+
+        let caretOffset = selection.location - lineRange.location
+        guard let action = MarkdownEditing.returnAction(forLine: line, caretOffset: caretOffset) else {
+            super.insertNewline(sender)
+            return
+        }
+
+        breakUndoCoalescing()
+        undoManager?.beginUndoGrouping()
+        switch action {
+        case .continueLine(let prefix):
+            insertText("\n" + prefix, replacementRange: selection)
+        case .endContainer(_, let indentation):
+            let contentLength = (line as NSString).length
+            insertText(
+                indentation,
+                replacementRange: NSRange(location: lineRange.location, length: contentLength)
+            )
+            let caret = lineRange.location + (indentation as NSString).length
+            setSelectedRange(NSRange(location: caret, length: 0))
+        }
+        undoManager?.endUndoGrouping()
     }
 
     // MARK: - Notifications
@@ -575,11 +614,11 @@ final class IrisTextView: NSTextView {
     @objc private func handleInsertSnippet(_ notification: Notification) {
         guard let snippet = notification.userInfo?["text"] as? String else { return }
 
-        breakUndoCoalescing()
         let selection = selectedRange()
-        guard shouldChangeText(in: selection, replacementString: snippet) else { return }
-        textStorage?.replaceCharacters(in: selection, with: snippet)
-        didChangeText()
+        breakUndoCoalescing()
+        undoManager?.beginUndoGrouping()
+        insertText(snippet, replacementRange: selection)
+        undoManager?.endUndoGrouping()
 
         let newLocation = selection.location + (snippet as NSString).length
         setSelectedRange(NSRange(location: newLocation, length: 0))
@@ -612,9 +651,9 @@ final class IrisTextView: NSTextView {
         }
 
         breakUndoCoalescing()
-        shouldChangeText(in: result.changedRange, replacementString: result.replacement)
-        textStorage?.replaceCharacters(in: result.changedRange, with: result.replacement)
-        didChangeText()
+        undoManager?.beginUndoGrouping()
+        insertText(result.replacement, replacementRange: result.changedRange)
+        undoManager?.endUndoGrouping()
         setSelectedRange(result.selection)
         scrollRangeToVisible(result.selection)
     }

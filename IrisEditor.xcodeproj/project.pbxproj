@@ -1,0 +1,345 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		00000000000000000000000C /* IrisEditorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000B /* IrisEditorApp.swift */; };
+		00000000000000000000000E /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000D /* AppState.swift */; };
+		000000000000000000000010 /* EditorDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000F /* EditorDocument.swift */; };
+		000000000000000000000012 /* EditorSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000011 /* EditorSettings.swift */; };
+		000000000000000000000014 /* FuzzyMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000013 /* FuzzyMatch.swift */; };
+		000000000000000000000016 /* MarkdownBlocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000015 /* MarkdownBlocks.swift */; };
+		000000000000000000000018 /* MarkdownEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000017 /* MarkdownEditing.swift */; };
+		00000000000000000000001A /* MarkdownFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000019 /* MarkdownFormatting.swift */; };
+		00000000000000000000001C /* MarkdownHTMLExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001B /* MarkdownHTMLExport.swift */; };
+		00000000000000000000001E /* MarkdownInline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001D /* MarkdownInline.swift */; };
+		000000000000000000000020 /* MarkdownOutline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001F /* MarkdownOutline.swift */; };
+		000000000000000000000022 /* MarkdownSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000021 /* MarkdownSupport.swift */; };
+		000000000000000000000024 /* RecentFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000023 /* RecentFiles.swift */; };
+		000000000000000000000026 /* TextSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000025 /* TextSearch.swift */; };
+		000000000000000000000028 /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000027 /* CommandPaletteView.swift */; };
+		00000000000000000000002A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000029 /* ContentView.swift */; };
+		00000000000000000000002C /* DocumentOutlineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000002B /* DocumentOutlineView.swift */; };
+		00000000000000000000002E /* FindReplacePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000002D /* FindReplacePanel.swift */; };
+		000000000000000000000030 /* MarkdownPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000002F /* MarkdownPreviewView.swift */; };
+		000000000000000000000032 /* QuickSwitcherView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000031 /* QuickSwitcherView.swift */; };
+		000000000000000000000034 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000033 /* SettingsView.swift */; };
+		000000000000000000000036 /* StatusBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000035 /* StatusBarView.swift */; };
+		000000000000000000000038 /* TabBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000037 /* TabBarView.swift */; };
+		00000000000000000000003A /* TextEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000039 /* TextEditorView.swift */; };
+		00000000000000000000003C /* WindowChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000003B /* WindowChrome.swift */; };
+		00000000000000000000003E /* EditingAndExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000003D /* EditingAndExportTests.swift */; };
+		000000000000000000000040 /* IrisEditorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000003F /* IrisEditorTests.swift */; };
+		000000000000000000000042 /* WorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000041 /* WorkspaceTests.swift */; };
+		00000000000000000000004A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000046 /* Assets.xcassets */; };
+		00000000000000000000004B /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 000000000000000000000047 /* XCTest.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		000000000000000000000058 /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = 000000000000000000000054 /* Project object */; proxyType = 1; remoteGlobalIDString = 000000000000000000000052; remoteInfo = IrisEditor; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		00000000000000000000000B /* IrisEditorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisEditorApp.swift; sourceTree = "<group>"; };
+		00000000000000000000000D /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		00000000000000000000000F /* EditorDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDocument.swift; sourceTree = "<group>"; };
+		000000000000000000000011 /* EditorSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSettings.swift; sourceTree = "<group>"; };
+		000000000000000000000013 /* FuzzyMatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FuzzyMatch.swift; sourceTree = "<group>"; };
+		000000000000000000000015 /* MarkdownBlocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlocks.swift; sourceTree = "<group>"; };
+		000000000000000000000017 /* MarkdownEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownEditing.swift; sourceTree = "<group>"; };
+		000000000000000000000019 /* MarkdownFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownFormatting.swift; sourceTree = "<group>"; };
+		00000000000000000000001B /* MarkdownHTMLExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownHTMLExport.swift; sourceTree = "<group>"; };
+		00000000000000000000001D /* MarkdownInline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownInline.swift; sourceTree = "<group>"; };
+		00000000000000000000001F /* MarkdownOutline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownOutline.swift; sourceTree = "<group>"; };
+		000000000000000000000021 /* MarkdownSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownSupport.swift; sourceTree = "<group>"; };
+		000000000000000000000023 /* RecentFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentFiles.swift; sourceTree = "<group>"; };
+		000000000000000000000025 /* TextSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextSearch.swift; sourceTree = "<group>"; };
+		000000000000000000000027 /* CommandPaletteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteView.swift; sourceTree = "<group>"; };
+		000000000000000000000029 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		00000000000000000000002B /* DocumentOutlineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentOutlineView.swift; sourceTree = "<group>"; };
+		00000000000000000000002D /* FindReplacePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindReplacePanel.swift; sourceTree = "<group>"; };
+		00000000000000000000002F /* MarkdownPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPreviewView.swift; sourceTree = "<group>"; };
+		000000000000000000000031 /* QuickSwitcherView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickSwitcherView.swift; sourceTree = "<group>"; };
+		000000000000000000000033 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		000000000000000000000035 /* StatusBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarView.swift; sourceTree = "<group>"; };
+		000000000000000000000037 /* TabBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabBarView.swift; sourceTree = "<group>"; };
+		000000000000000000000039 /* TextEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextEditorView.swift; sourceTree = "<group>"; };
+		00000000000000000000003B /* WindowChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowChrome.swift; sourceTree = "<group>"; };
+		00000000000000000000003D /* EditingAndExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditingAndExportTests.swift; sourceTree = "<group>"; };
+		00000000000000000000003F /* IrisEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisEditorTests.swift; sourceTree = "<group>"; };
+		000000000000000000000041 /* WorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTests.swift; sourceTree = "<group>"; };
+		000000000000000000000043 /* IrisEditor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = IrisEditor.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000044 /* IrisEditorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = IrisEditorTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000045 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		000000000000000000000046 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		000000000000000000000047 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = Platforms/MacOSX.platform/Developer/Library/Frameworks/XCTest.framework; sourceTree = DEVELOPER_DIR; };
+		000000000000000000000048 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		000000000000000000000049 /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Package.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		00000000000000000000004D /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		000000000000000000000050 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (
+			00000000000000000000004B /* XCTest.framework in Frameworks */,
+		); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		000000000000000000000001 /* Managers */ = {isa = PBXGroup; children = (
+			00000000000000000000000D /* AppState.swift */,
+		); path = Managers; sourceTree = "<group>"; };
+		000000000000000000000002 /* Models */ = {isa = PBXGroup; children = (
+			00000000000000000000000F /* EditorDocument.swift */,
+			000000000000000000000011 /* EditorSettings.swift */,
+			000000000000000000000013 /* FuzzyMatch.swift */,
+			000000000000000000000015 /* MarkdownBlocks.swift */,
+			000000000000000000000017 /* MarkdownEditing.swift */,
+			000000000000000000000019 /* MarkdownFormatting.swift */,
+			00000000000000000000001B /* MarkdownHTMLExport.swift */,
+			00000000000000000000001D /* MarkdownInline.swift */,
+			00000000000000000000001F /* MarkdownOutline.swift */,
+			000000000000000000000021 /* MarkdownSupport.swift */,
+			000000000000000000000023 /* RecentFiles.swift */,
+			000000000000000000000025 /* TextSearch.swift */,
+		); path = Models; sourceTree = "<group>"; };
+		000000000000000000000003 /* Views */ = {isa = PBXGroup; children = (
+			000000000000000000000027 /* CommandPaletteView.swift */,
+			000000000000000000000029 /* ContentView.swift */,
+			00000000000000000000002B /* DocumentOutlineView.swift */,
+			00000000000000000000002D /* FindReplacePanel.swift */,
+			00000000000000000000002F /* MarkdownPreviewView.swift */,
+			000000000000000000000031 /* QuickSwitcherView.swift */,
+			000000000000000000000033 /* SettingsView.swift */,
+			000000000000000000000035 /* StatusBarView.swift */,
+			000000000000000000000037 /* TabBarView.swift */,
+			000000000000000000000039 /* TextEditorView.swift */,
+			00000000000000000000003B /* WindowChrome.swift */,
+		); path = Views; sourceTree = "<group>"; };
+		000000000000000000000004 /* IrisEditor */ = {isa = PBXGroup; children = (
+			00000000000000000000000B /* IrisEditorApp.swift */,
+			000000000000000000000001 /* Managers */,
+			000000000000000000000002 /* Models */,
+			000000000000000000000003 /* Views */,
+		); path = IrisEditor; sourceTree = "<group>"; };
+		000000000000000000000005 /* Sources */ = {isa = PBXGroup; children = (
+			000000000000000000000004 /* IrisEditor */,
+		); path = Sources; sourceTree = "<group>"; };
+		000000000000000000000006 /* IrisEditorTests */ = {isa = PBXGroup; children = (
+			00000000000000000000003D /* EditingAndExportTests.swift */,
+			00000000000000000000003F /* IrisEditorTests.swift */,
+			000000000000000000000041 /* WorkspaceTests.swift */,
+		); path = IrisEditorTests; sourceTree = "<group>"; };
+		000000000000000000000007 /* Tests */ = {isa = PBXGroup; children = (
+			000000000000000000000006 /* IrisEditorTests */,
+		); path = Tests; sourceTree = "<group>"; };
+		000000000000000000000008 /* Support */ = {isa = PBXGroup; children = (
+			000000000000000000000045 /* Info.plist */,
+			000000000000000000000046 /* Assets.xcassets */,
+		); path = Support; sourceTree = "<group>"; };
+		000000000000000000000009 /* Products */ = {isa = PBXGroup; children = (
+			000000000000000000000043 /* IrisEditor.app */,
+			000000000000000000000044 /* IrisEditorTests.xctest */,
+		); name = Products; sourceTree = "<group>"; };
+		00000000000000000000000A = {isa = PBXGroup; children = (
+			000000000000000000000005 /* Sources */,
+			000000000000000000000007 /* Tests */,
+			000000000000000000000008 /* Support */,
+			000000000000000000000009 /* Products */,
+			000000000000000000000048 /* README.md */,
+			000000000000000000000049 /* Package.swift */,
+			000000000000000000000047 /* XCTest.framework */,
+		); sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		000000000000000000000052 /* IrisEditor */ = {isa = PBXNativeTarget; buildConfigurationList = 000000000000000000000055 /* Build configuration list for PBXNativeTarget "IrisEditor" */; buildPhases = (00000000000000000000004C /* Sources */, 00000000000000000000004D /* Frameworks */, 00000000000000000000004E /* Resources */); buildRules = (); dependencies = (); name = IrisEditor; productName = IrisEditor; productReference = 000000000000000000000043 /* IrisEditor.app */; productType = "com.apple.product-type.application"; };
+		000000000000000000000053 /* IrisEditorTests */ = {isa = PBXNativeTarget; buildConfigurationList = 000000000000000000000056 /* Build configuration list for PBXNativeTarget "IrisEditorTests" */; buildPhases = (00000000000000000000004F /* Sources */, 000000000000000000000050 /* Frameworks */, 000000000000000000000051 /* Resources */); buildRules = (); dependencies = (000000000000000000000057 /* PBXTargetDependency */); name = IrisEditorTests; productName = IrisEditorTests; productReference = 000000000000000000000044 /* IrisEditorTests.xctest */; productType = "com.apple.product-type.bundle.unit-test"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		000000000000000000000054 /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2700; LastUpgradeCheck = 2700; TargetAttributes = {000000000000000000000052 = {CreatedOnToolsVersion = 27.0; }; 000000000000000000000053 = {CreatedOnToolsVersion = 27.0; TestTargetID = 000000000000000000000052; }; }; }; buildConfigurationList = 000000000000000000000059 /* Build configuration list for PBXProject "IrisEditor" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = 00000000000000000000000A; productRefGroup = 000000000000000000000009 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (000000000000000000000052 /* IrisEditor */, 000000000000000000000053 /* IrisEditorTests */); };
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		00000000000000000000004E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (
+			00000000000000000000004A /* Assets.xcassets in Resources */,
+		); runOnlyForDeploymentPostprocessing = 0; };
+		000000000000000000000051 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		00000000000000000000004C /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
+			00000000000000000000000C /* IrisEditorApp.swift in Sources */,
+			00000000000000000000000E /* AppState.swift in Sources */,
+			000000000000000000000010 /* EditorDocument.swift in Sources */,
+			000000000000000000000012 /* EditorSettings.swift in Sources */,
+			000000000000000000000014 /* FuzzyMatch.swift in Sources */,
+			000000000000000000000016 /* MarkdownBlocks.swift in Sources */,
+			000000000000000000000018 /* MarkdownEditing.swift in Sources */,
+			00000000000000000000001A /* MarkdownFormatting.swift in Sources */,
+			00000000000000000000001C /* MarkdownHTMLExport.swift in Sources */,
+			00000000000000000000001E /* MarkdownInline.swift in Sources */,
+			000000000000000000000020 /* MarkdownOutline.swift in Sources */,
+			000000000000000000000022 /* MarkdownSupport.swift in Sources */,
+			000000000000000000000024 /* RecentFiles.swift in Sources */,
+			000000000000000000000026 /* TextSearch.swift in Sources */,
+			000000000000000000000028 /* CommandPaletteView.swift in Sources */,
+			00000000000000000000002A /* ContentView.swift in Sources */,
+			00000000000000000000002C /* DocumentOutlineView.swift in Sources */,
+			00000000000000000000002E /* FindReplacePanel.swift in Sources */,
+			000000000000000000000030 /* MarkdownPreviewView.swift in Sources */,
+			000000000000000000000032 /* QuickSwitcherView.swift in Sources */,
+			000000000000000000000034 /* SettingsView.swift in Sources */,
+			000000000000000000000036 /* StatusBarView.swift in Sources */,
+			000000000000000000000038 /* TabBarView.swift in Sources */,
+			00000000000000000000003A /* TextEditorView.swift in Sources */,
+			00000000000000000000003C /* WindowChrome.swift in Sources */,
+		); runOnlyForDeploymentPostprocessing = 0; };
+		00000000000000000000004F /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
+			00000000000000000000003E /* EditingAndExportTests.swift in Sources */,
+			000000000000000000000040 /* IrisEditorTests.swift in Sources */,
+			000000000000000000000042 /* WorkspaceTests.swift in Sources */,
+		); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		000000000000000000000057 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 000000000000000000000052 /* IrisEditor */; targetProxy = 000000000000000000000058 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		00000000000000000000005A /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				}; name = Debug; };
+		00000000000000000000005B /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				}; name = Release; };
+		00000000000000000000005C /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1.5;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Support/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.apollostudiomoonshot.IrisEditor;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				}; name = Debug; };
+		00000000000000000000005D /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1.5;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Support/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.apollostudiomoonshot.IrisEditor;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				}; name = Release; };
+		00000000000000000000005E /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.apollostudiomoonshot.IrisEditorTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/IrisEditor.app/Contents/MacOS/IrisEditor";
+				}; name = Debug; };
+		00000000000000000000005F /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.apollostudiomoonshot.IrisEditorTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/IrisEditor.app/Contents/MacOS/IrisEditor";
+				}; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		000000000000000000000059 /* Build configuration list for PBXProject "IrisEditor" */ = {isa = XCConfigurationList; buildConfigurations = (00000000000000000000005A /* Debug */, 00000000000000000000005B /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		000000000000000000000055 /* Build configuration list for PBXNativeTarget "IrisEditor" */ = {isa = XCConfigurationList; buildConfigurations = (00000000000000000000005C /* Debug */, 00000000000000000000005D /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		000000000000000000000056 /* Build configuration list for PBXNativeTarget "IrisEditorTests" */ = {isa = XCConfigurationList; buildConfigurations = (00000000000000000000005E /* Debug */, 00000000000000000000005F /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+
+	};
+	rootObject = 000000000000000000000054 /* Project object */;
+}

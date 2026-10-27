@@ -79,7 +79,8 @@ private struct MarkdownBlockView: View {
                 header: header,
                 alignments: alignments,
                 rows: rows,
-                references: references
+                references: references,
+                baseURL: baseURL
             )
 
         case .thematicBreak:
@@ -360,8 +361,10 @@ private struct MarkdownInlineText {
     private func resolve(_ destination: String) -> URL? {
         let trimmed = destination.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        if let url = URL(string: trimmed), url.scheme != nil {
-            return url
+        if let url = URL(string: trimmed), let scheme = url.scheme?.lowercased() {
+            // Only hand known-safe schemes to the system. Markdown files can contain
+            // `javascript:`/`data:` links, which should not become clickable actions.
+            return Self.allowedLinkSchemes.contains(scheme) ? url : nil
         }
         if let baseURL {
             return URL(
@@ -371,6 +374,10 @@ private struct MarkdownInlineText {
         }
         return URL(string: trimmed)
     }
+
+    private static let allowedLinkSchemes: Set<String> = [
+        "http", "https", "mailto", "file", "iriseditor",
+    ]
 
     /// Custom URL intercepted by `ContentView` to resolve `[[wiki links]]` inside Iris.
     private func wikiURL(for target: String) -> URL? {
@@ -503,6 +510,7 @@ private struct MarkdownTablePreview: View {
     let alignments: [MarkdownTableAlignment]
     let rows: [[String]]
     let references: [String: MarkdownLinkReference]
+    let baseURL: URL?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -539,7 +547,7 @@ private struct MarkdownTablePreview: View {
 
     @ViewBuilder
     private func cell(_ text: String, alignment: MarkdownTableAlignment, isHeader: Bool) -> some View {
-        MarkdownInlineText(references: references, baseURL: nil, size: 13)
+        MarkdownInlineText(references: references, baseURL: baseURL, size: 13)
             .text(text)
             .font(.system(size: 13, weight: isHeader ? .semibold : .regular))
             .frame(maxWidth: .infinity, alignment: frameAlignment(alignment))

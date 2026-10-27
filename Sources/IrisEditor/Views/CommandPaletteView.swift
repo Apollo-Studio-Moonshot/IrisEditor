@@ -40,6 +40,9 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "Save As…", icon: "square.and.arrow.down.on.square", shortcut: "⇧⌘S") {
                 _ = appState.saveDocumentAs()
             },
+            PaletteCommand(title: "Export as HTML…", icon: "safari", shortcut: "⇧⌘E") {
+                appState.exportHTML()
+            },
             PaletteCommand(title: "Find & Replace", icon: "magnifyingglass", shortcut: "⌘F") {
                 appState.showFindReplace = true
             },

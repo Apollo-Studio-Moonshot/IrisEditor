@@ -26,6 +26,11 @@ Electron, no dependencies, and no project bloat.
   `⌘W` closes the current tab (prompting to save; the last tab closes the window),
   `⇧⌘[` / `⇧⌘]` cycle tabs, and
   opening a file already shown focuses its existing tab
+- **Smart Markdown continuation** — Return continues bulleted, ordered, task, and quoted
+  lines with the right marker (incrementing ordered numbers), and Return on an empty item
+  exits the list instead of leaving a stray marker
+- **HTML export** — File ▸ Export as HTML… (`⇧⌘E`) writes a standalone, appearance-aware
+  HTML file using the same parser as the in-app preview
 - **Animated tab strip** — tabs scale and fade in/out as they open and close, the active
   Liquid Glass pill slides between tabs, and the strip auto-scrolls to keep the active tab
   visible
@@ -66,9 +71,26 @@ No third-party packages, no Package.swift dependencies.
 
 ## Build & Run
 
+### Xcode
+
 ```sh
 git clone https://github.com/Apollo-Studio-Moonshot/IrisEditor.git
 cd IrisEditor
+open IrisEditor.xcodeproj
+```
+
+Select the **IrisEditor** scheme and run. The project includes the app target, the
+**IrisEditorTests** unit-test target, a shared scheme, `Support/Info.plist`, and an asset
+catalog with the app icon and accent color. For a command-line build:
+
+```sh
+xcodebuild -project IrisEditor.xcodeproj -scheme IrisEditor -configuration Debug \
+  -derivedDataPath .build/xcode-derived build
+```
+
+### Swift Package Manager
+
+```sh
 swift run IrisEditor
 ```
 
@@ -81,11 +103,17 @@ swift run            # build and launch
 ```
 
 The built binary lands in `.build/debug/IrisEditor` (or `.build/release/IrisEditor`).
+`scripts/build_app_bundle.sh` wraps the release binary in a signed `.app` using the same
+`Support/Info.plist` as the Xcode target.
 
 ### Tests
 
+In Xcode, press `⌘U` (the shared scheme includes the test target). From the command line:
+
 ```sh
 swift test
+# or
+xcodebuild -project IrisEditor.xcodeproj -scheme IrisEditor -derivedDataPath .build/xcode-derived test
 ```
 
 > Note: with Command Line Tools only (no full Xcode), the Swift Testing macro plugin is
@@ -100,6 +128,7 @@ swift test
 | `⌘O` | Open… (multi-select) |
 | `⌘S` | Save |
 | `⇧⌘S` | Save As… |
+| `⇧⌘E` | Export as HTML… |
 | `⌘W` | Close Tab (closes the window on the last tab) |
 | `⇧⌘T` | Reopen Closed Tab |
 | `⇧⌘[` / `⇧⌘]` | Previous / Next Tab |
@@ -114,12 +143,17 @@ swift test
 | `⌘I` | Italic |
 | `⌘K` | Inline Code |
 | `⌥⌘P` | Cycle Source / Split / Preview |
+| `Return` | Continue the current list/quote item |
 
 ## Project Structure
 
 ```
 IrisEditor/
 ├── Package.swift                     # SwiftPM manifest (macOS 26, Swift 6 language mode)
+├── IrisEditor.xcodeproj/             # Xcode app + unit-test targets, shared scheme
+├── Support/
+│   ├── Info.plist                    # Bundle metadata, Markdown document types
+│   └── Assets.xcassets/              # App icon and Iris accent color
 ├── Sources/IrisEditor/
 │   ├── IrisEditorApp.swift           # @main App, Commands, Settings scene, AppDelegate
 │   ├── Managers/
@@ -129,6 +163,8 @@ IrisEditor/
 │   │   ├── EditorSettings.swift      # Codable settings + UserDefaults persistence
 │   │   ├── FuzzyMatch.swift          # Fuzzy scoring for the quick switcher / palette
 │   │   ├── MarkdownBlocks.swift      # Recursive block parser for the preview
+│   │   ├── MarkdownEditing.swift     # List/quote continuation logic for Return
+│   │   ├── MarkdownHTMLExport.swift  # Standalone HTML export renderer
 │   │   ├── MarkdownInline.swift      # Inline parser (emphasis, code, links, wiki links…)
 │   │   ├── MarkdownOutline.swift     # ATX/Setext heading extraction for the outline
 │   │   ├── MarkdownFormatting.swift  # Grapheme-safe wrap/unwrap + line-prefix formatting
@@ -147,9 +183,12 @@ IrisEditor/
 │       ├── FindReplacePanel.swift    # Glass find/replace and go-to-line bar
 │       ├── StatusBarView.swift       # Cursor / counts / size readout
 │       └── SettingsView.swift        # Native grouped Settings form
-└── Tests/IrisEditorTests/
-    ├── IrisEditorTests.swift         # Markdown, search, and formatting tests
-    └── WorkspaceTests.swift          # Fuzzy matching, outline, wiki links, recents
+├── Tests/IrisEditorTests/
+│   ├── EditingAndExportTests.swift   # Continuation, statistics, offsets, HTML export
+│   ├── IrisEditorTests.swift         # Markdown, search, and formatting tests
+│   └── WorkspaceTests.swift          # Fuzzy matching, outline, wiki links, recents
+└── scripts/
+    └── build_app_bundle.sh           # Wrap the release binary in a signed .app
 ```
 
 ## Architecture Notes
@@ -191,13 +230,21 @@ IrisEditor/
   `MarkdownPlainText` to strip formatting markers before counting.
 - **Markdown formatting** is issued as a notification from `AppState` and serviced by the
   text view (`toggleMarkdownFormat`), which wraps/unwraps the selection in the requested
-  marker without replacing user content.
+  marker without replacing user content. Formatting and snippet insertion go through
+  `NSTextView.insertText(_:replacementRange:)` so they participate in undo/redo.
+- **Smart Return** is centralized in `MarkdownEditing`, a pure helper that detects bullet,
+  ordered, task-list, and nested block-quote markers. `IrisTextView.insertNewline` applies
+  the decision; an empty item removes its marker and exits the container.
+- **HTML export** reuses the preview's block and inline parsers through
+  `MarkdownHTMLExport`, escaping text and raw HTML so exported files are safe to open in a
+  browser and look consistent with the in-app preview.
 
 ## Status
 
 Iris Editor is an early work-in-progress. Markdown editing, syntax highlighting, preview,
-formatting, find/replace, go-to-line, settings, animated tabs, the quick switcher, command
-palette, outline sidebar, wiki links, recent files, and the status bar are functional.
+formatting, smart list continuation, HTML export, find/replace, go-to-line, settings,
+animated tabs, the quick switcher, command palette, outline sidebar, wiki links, recent
+files, and the status bar are functional.
 
 **Not yet implemented:** GPT-2 autocomplete. The original Python prototype used
 `transformers`/`torch`; running it in Swift would require converting the model to Core ML.

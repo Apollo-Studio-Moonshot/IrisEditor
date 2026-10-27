@@ -111,6 +111,13 @@ struct IrisEditorApp: App {
                     appState.saveDocumentAs()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Export as HTML…") {
+                    appState.exportHTML()
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
             }
 
             CommandGroup(after: .textEditing) {

@@ -431,6 +431,27 @@ final class AppState: ObservableObject {
         return save(to: url)
     }
 
+    /// Exports the current document as a self-contained HTML file. The Markdown source
+    /// and its dirty state are left untouched, so export never affects autosave.
+    func exportHTML() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.html]
+        panel.canCreateDirectories = true
+        let baseName = (document.displayName as NSString).deletingPathExtension
+        let title = baseName.isEmpty ? "Untitled" : baseName
+        panel.nameFieldStringValue = title + ".html"
+        panel.message = "Export the rendered document as a standalone HTML file."
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let html = MarkdownHTMLExport.document(from: document.text, title: title)
+        do {
+            try html.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            presentError("Couldn't export “\(url.lastPathComponent)”.", error: error)
+        }
+    }
+
     @discardableResult
     private func save(to url: URL) -> Bool {
         // If the user chose a Markdown panel without an extension, default to `.md`.
