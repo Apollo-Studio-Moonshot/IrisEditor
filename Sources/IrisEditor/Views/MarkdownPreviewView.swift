@@ -10,7 +10,7 @@ struct MarkdownPreviewView: View {
     let markdown: String
     var baseURL: URL? = nil
     var theme: PreviewTheme = .system
-    var onToggleTask: (@Sendable (String) -> Void)? = nil
+    var onToggleTask: (@MainActor @Sendable (String) -> Void)? = nil
 
     var body: some View {
         let document = MarkdownBlockParser.parseDocument(markdown)
@@ -56,7 +56,7 @@ private struct PreviewThemeKey: EnvironmentKey {
 }
 
 private struct TogglePreviewTaskKey: EnvironmentKey {
-    static let defaultValue: (@Sendable (String) -> Void)? = nil
+    static let defaultValue: (@MainActor @Sendable (String) -> Void)? = nil
 }
 
 extension EnvironmentValues {
@@ -65,7 +65,7 @@ extension EnvironmentValues {
         set { self[PreviewThemeKey.self] = newValue }
     }
 
-    fileprivate var togglePreviewTask: (@Sendable (String) -> Void)? {
+    fileprivate var togglePreviewTask: (@MainActor @Sendable (String) -> Void)? {
         get { self[TogglePreviewTaskKey.self] }
         set { self[TogglePreviewTaskKey.self] = newValue }
     }

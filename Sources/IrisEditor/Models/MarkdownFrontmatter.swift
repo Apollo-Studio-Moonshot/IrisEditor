@@ -156,7 +156,7 @@ enum MarkdownFrontmatterParser {
                 continue
             }
 
-            var value = String(trimmed[trimmed.index(after: colon)...])
+            let value = String(trimmed[trimmed.index(after: colon)...])
                 .trimmingCharacters(in: .whitespaces)
 
             // Block scalars (`key: |` or `key: >`) collect the indented lines below.

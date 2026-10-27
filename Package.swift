@@ -1,10 +1,10 @@
-// swift-tools-version: 6.3
+// swift-tools-version: 6.4
 import PackageDescription
 
 let package = Package(
     name: "IrisEditor",
     platforms: [
-        .macOS(.v26)
+        .macOS(.v27)
     ],
     targets: [
         .executableTarget(
