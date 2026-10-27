@@ -6,7 +6,7 @@ struct StatusBarView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            item("Ln \(appState.cursorLine), Col \(appState.cursorColumn)")
+            item(L10n.cursorPosition(line: appState.cursorLine, column: appState.cursorColumn))
             separator
             item(lineCountText)
             separator
@@ -17,14 +17,14 @@ struct StatusBarView: View {
             Spacer(minLength: 12)
 
             if appState.document.isDirty {
-                item("Edited")
+                item(L10n.edited)
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 separator
                     .transition(.opacity)
             }
             item(appState.document.fileSizeDescription)
             separator
-            item("UTF-8")
+            item(L10n.utf8)
         }
         .animation(.snappy(duration: 0.18), value: appState.document.isDirty)
         .font(.system(size: 11))
@@ -41,18 +41,15 @@ struct StatusBarView: View {
     }
 
     private var lineCountText: String {
-        let count = appState.document.lineCount
-        return count == 1 ? "1 line" : "\(count) lines"
+        L10n.lines(appState.document.lineCount)
     }
 
     private var wordCountText: String {
-        let count = appState.document.wordCount
-        return count == 1 ? "1 word" : "\(count) words"
+        L10n.words(appState.document.wordCount)
     }
 
     private var characterCountText: String {
-        let count = appState.document.characterCount
-        return count == 1 ? "1 character" : "\(count) characters"
+        L10n.characters(appState.document.characterCount)
     }
 
     private var separator: some View {

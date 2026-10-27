@@ -17,34 +17,34 @@ struct IrisEditorApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Tab") {
+                Button(L10n.newTabMenu) {
                     appState.newDocument()
                 }
-                .keyboardShortcut("t", modifiers: .command)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .newTab))
 
-                Button("Open…") {
+                Button(L10n.openMenu) {
                     appState.openDocument()
                 }
-                .keyboardShortcut("o", modifiers: .command)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .openDocument))
             }
 
             CommandGroup(after: .newItem) {
-                Button("Close Tab") {
+                Button(L10n.closeTabMenu) {
                     appState.closeTab(at: appState.currentTabIndex)
                 }
-                .keyboardShortcut("w", modifiers: .command)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .closeTab))
 
-                Button("Reopen Closed Tab") {
+                Button(L10n.reopenClosedTab) {
                     appState.reopenClosedTab()
                 }
-                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .reopenClosedTab))
                 .disabled(appState.closedFileURLs.isEmpty)
 
                 Divider()
 
-                Menu("Open Recent") {
+                Menu(L10n.openRecent) {
                     if appState.recentFiles.isEmpty {
-                        Button("No Recent Files") {}
+                        Button(L10n.noRecentFiles) {}
                             .disabled(true)
                     } else {
                         ForEach(appState.recentFiles, id: \.self) { url in
@@ -56,7 +56,7 @@ struct IrisEditorApp: App {
 
                         Divider()
 
-                        Button("Clear Menu") {
+                        Button(L10n.clearMenu) {
                             appState.clearRecentFiles()
                         }
                     }
@@ -64,23 +64,23 @@ struct IrisEditorApp: App {
 
                 Divider()
 
-                Button("Next Tab") {
+                Button(L10n.nextTab) {
                     appState.selectTab(at: (appState.currentTabIndex + 1) % appState.tabs.count)
                 }
-                .keyboardShortcut("]", modifiers: [.command, .shift])
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .nextTab))
                 .disabled(appState.tabs.count < 2)
 
-                Button("Previous Tab") {
+                Button(L10n.previousTab) {
                     let count = appState.tabs.count
                     appState.selectTab(at: (appState.currentTabIndex - 1 + count) % count)
                 }
-                .keyboardShortcut("[", modifiers: [.command, .shift])
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .previousTab))
                 .disabled(appState.tabs.count < 2)
 
                 Divider()
 
                 ForEach(1...9, id: \.self) { number in
-                    Button(number == 9 ? "Last Tab" : "Tab \(number)") {
+                    Button(number == 9 ? L10n.lastTab : L10n.tab(number)) {
                         appState.selectTab(number: number)
                     }
                     .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)
@@ -89,146 +89,243 @@ struct IrisEditorApp: App {
             }
 
             CommandGroup(replacing: .printItem) {
-                EmptyView()
+                Button(L10n.printDocument) {
+                    appState.printDocument()
+                }
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .printDocument))
             }
 
-            CommandMenu("Navigate") {
-                Button("Quick Switcher…") {
+            CommandMenu(L10n.navigateMenu) {
+                Button(L10n.quickSwitcher) {
                     appState.toggleQuickSwitcher()
                 }
-                .keyboardShortcut("p", modifiers: .command)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .quickSwitcher))
 
-                Button("Command Palette…") {
+                Button(L10n.commandPalette) {
                     appState.toggleCommandPalette()
                 }
-                .keyboardShortcut("p", modifiers: [.command, .shift])
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .commandPalette))
 
                 Divider()
 
-                Button("Toggle Outline") {
+                Button(L10n.toggleOutline) {
                     appState.toggleOutline()
                 }
-                .keyboardShortcut("o", modifiers: [.command, .shift])
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .toggleOutline))
+
+                Button(L10n.zenMode) {
+                    appState.toggleZenMode()
+                }
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .zenMode))
+
+                Button(L10n.versionHistory) {
+                    appState.presentVersionHistory()
+                }
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .versionHistory))
+            }
+
+            CommandGroup(after: .pasteboard) {
+                Divider()
+                Button(L10n.pasteAsMarkdown) {
+                    appState.pasteAsMarkdown()
+                }
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .pasteAsMarkdown))
             }
 
             CommandGroup(replacing: .saveItem) {
-                Button("Save") {
+                Button(L10n.saveMenu) {
                     appState.saveDocument()
                 }
                 .keyboardShortcut("s", modifiers: .command)
 
-                Button("Save As…") {
+                Button(L10n.saveAsMenu) {
                     appState.saveDocumentAs()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
 
                 Divider()
 
-                Button("Export as HTML…") {
+                Button(L10n.exportHTML) {
                     appState.exportHTML()
                 }
-                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .exportHTML))
+
+                Button(L10n.exportPDF) {
+                    appState.exportPDF()
+                }
+
+                Button(L10n.exportRTF) {
+                    appState.exportRTF()
+                }
             }
 
             CommandGroup(after: .textEditing) {
                 Divider()
-                Button("Find & Replace…") {
+                Button(L10n.findReplace) {
                     appState.showFindReplace = true
                 }
-                .keyboardShortcut("f", modifiers: .command)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .findReplace))
 
-                Button("Go to Line…") {
+                Button(L10n.goToLine) {
                     appState.showGoToLine = true
                 }
-                .keyboardShortcut("g", modifiers: .command)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .goToLine))
             }
 
             CommandGroup(after: .toolbar) {
                 Divider()
-                Button("Zoom In") {
+                Button(L10n.zoomIn) {
                     appState.zoomIn()
                 }
-                .keyboardShortcut("=", modifiers: .command)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .zoomIn))
 
-                Button("Zoom Out") {
+                Button(L10n.zoomOut) {
                     appState.zoomOut()
                 }
-                .keyboardShortcut("-", modifiers: .command)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .zoomOut))
 
-                Button("Actual Size") {
+                Button(L10n.actualSize) {
                     appState.resetZoom()
                 }
-                .keyboardShortcut("0", modifiers: .command)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .actualSize))
             }
 
-            CommandMenu("Format") {
-                Button("Bold") {
+            CommandMenu(L10n.formatMenu) {
+                Button(L10n.bold) {
                     appState.toggleMarkdownFormat(prefix: "**")
                 }
-                .keyboardShortcut("b", modifiers: .command)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .bold))
 
-                Button("Italic") {
+                Button(L10n.italic) {
                     appState.toggleMarkdownFormat(prefix: "*")
                 }
-                .keyboardShortcut("i", modifiers: .command)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .italic))
 
                 Divider()
 
-                Button("Inline Code") {
+                Button(L10n.inlineCode) {
                     appState.toggleMarkdownFormat(prefix: "`")
                 }
-                .keyboardShortcut("k", modifiers: .command)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .inlineCode))
 
-                Button("Strikethrough") {
+                Button(L10n.strikethrough) {
                     appState.toggleMarkdownFormat(prefix: "~~")
                 }
 
                 Divider()
 
-                Button("Heading") {
+                Button(L10n.heading) {
                     appState.toggleMarkdownFormat(prefix: "# ")
                 }
 
-                Button("Bulleted List") {
+                Button(L10n.bulletedList) {
                     appState.toggleMarkdownFormat(prefix: "- ")
                 }
 
-                Button("Block Quote") {
+                Button(L10n.blockQuote) {
                     appState.toggleMarkdownFormat(prefix: "> ")
                 }
 
                 Divider()
 
-                Button("Insert Table") {
+                Button(L10n.insertTable) {
                     appState.insertSnippet(ContentView.tableTemplate)
                 }
 
                 Divider()
 
-                Button("Toggle Preview") {
+                Button(L10n.togglePreview) {
                     appState.viewMode = appState.viewMode.next
                 }
-                .keyboardShortcut("p", modifiers: [.command, .option])
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .togglePreview))
             }
 
             CommandGroup(replacing: .appInfo) {
-                Button("About Iris Editor") {
+                Button(L10n.aboutIris) {
                     NSApp.orderFrontStandardAboutPanel(nil)
                 }
             }
 
-            CommandMenu("Model") {
-                Button("Load GPT-2 Model… (Coming Soon)") {
-                    GPT2UnavailableAlert.present()
+            CommandMenu(L10n.aiMenu) {
+                Button(L10n.inlineCompletion) {
+                    appState.requestInlineCompletion()
+                }
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .inlineCompletion))
+
+                Button(L10n.rewriteSelection) {
+                    appState.requestRewriteSelection()
+                }
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .rewriteSelection))
+
+                Divider()
+
+                Button(L10n.summarizeDocument) {
+                    appState.summarizeDocument()
+                }
+
+                Button(L10n.generateTitleTags) {
+                    appState.generateTitleAndTags()
                 }
 
                 Divider()
 
-                Button("Trigger Autocomplete") {
-                    GPT2UnavailableAlert.present()
+                Text(appState.ai.availabilityDescription)
+                    .disabled(true)
+            }
+
+            CommandMenu(L10n.vaultMenu) {
+                Button(L10n.newNoteMenu) {
+                    appState.createNote()
                 }
-                .keyboardShortcut(" ", modifiers: .control)
-                .disabled(true)
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .newNote))
+
+                Button(L10n.searchAllNotes) {
+                    appState.toggleVaultSearch()
+                }
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .vaultSearch))
+
+                Button(L10n.dailyNote) {
+                    appState.openDailyNote()
+                }
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .dailyNote))
+
+                Divider()
+
+                Menu(L10n.sidebarMenu) {
+                    ForEach(VaultPane.allCases) { pane in
+                        Button(pane.title) {
+                            appState.setSidebarPane(pane)
+                        }
+                    }
+                }
+
+                Menu(L10n.insertTemplate) {
+                    if appState.vaultTemplates.isEmpty {
+                        Text(L10n.noTemplates)
+                            .disabled(true)
+                    } else {
+                        ForEach(appState.vaultTemplates, id: \.self) { url in
+                            Button(url.deletingPathExtension().lastPathComponent) {
+                                appState.applyTemplate(url)
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
+                Button(L10n.chooseVaultFolderMenu) {
+                    appState.chooseVaultFolder()
+                }
+
+                Button(L10n.versionHistory) {
+                    appState.presentVersionHistory()
+                }
+
+                Button(L10n.openCurrentNoteToSide) {
+                    appState.openInSecondPane()
+                }
+                .disabled(appState.secondDocument != nil)
             }
         }
 
@@ -236,6 +333,12 @@ struct IrisEditorApp: App {
             SettingsView()
                 .environmentObject(appState)
         }
+
+        MenuBarExtra("Iris Capture", systemImage: "square.and.pencil") {
+            QuickCaptureView()
+                .environmentObject(appState)
+        }
+        .menuBarExtraStyle(.window)
     }
 }
 
@@ -247,7 +350,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        AppState.shared.confirmDiscardAllTabs() ? .terminateNow : .terminateCancel
+        AppState.shared.saveSession()
+        return AppState.shared.confirmDiscardAllTabs() ? .terminateNow : .terminateCancel
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        AppState.shared.saveSession()
+        DraftStore.prune(olderThan: 30)
+        SpotlightIndexer.removeAll()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -255,7 +365,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        AppState.shared.open(urls: urls)
+        for url in urls {
+            if url.scheme == "iriseditor", url.host == "capture" {
+                AppState.shared.handleCaptureURL(url)
+            } else {
+                AppState.shared.open(urls: [url])
+            }
+        }
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -263,17 +379,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-@MainActor
-private enum GPT2UnavailableAlert {
-    static func present() {
-        let alert = NSAlert()
-        alert.messageText = "GPT-2 Autocomplete"
-        alert.informativeText = """
-        Running GPT-2 in Swift requires converting the model to Core ML. \
-        This feature will be added in a future update.
-        """
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+private extension View {
+    /// Applies a shortcut only when one is available, so a missing binding leaves the
+    /// menu item without a key equivalent instead of crashing the command builder.
+    @ViewBuilder
+    func irisKeyboardShortcut(_ shortcut: KeyboardShortcut?) -> some View {
+        if let shortcut {
+            keyboardShortcut(shortcut)
+        } else {
+            self
+        }
     }
 }

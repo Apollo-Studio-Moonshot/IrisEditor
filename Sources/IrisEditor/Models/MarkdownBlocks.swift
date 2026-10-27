@@ -30,6 +30,19 @@ struct MarkdownLinkReference: Equatable {
 struct MarkdownDocument: Equatable {
     let blocks: [MarkdownBlock]
     let references: [String: MarkdownLinkReference]
+    /// YAML frontmatter at the top of the document, when present. The block is excluded
+    /// from `blocks` so raw `---`/`key: value` lines never render as Markdown.
+    let frontmatter: MarkdownFrontmatter?
+
+    init(
+        blocks: [MarkdownBlock],
+        references: [String: MarkdownLinkReference],
+        frontmatter: MarkdownFrontmatter? = nil
+    ) {
+        self.blocks = blocks
+        self.references = references
+        self.frontmatter = frontmatter
+    }
 }
 
 /// Per-column alignment from a GFM pipe-table delimiter row (`:---`, `:---:`, `---:`).
@@ -49,12 +62,19 @@ enum MarkdownBlockParser {
 
     static func parseDocument(_ text: String) -> MarkdownDocument {
         var references: [String: MarkdownLinkReference] = [:]
-        let lines = text
+        let normalized = text
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
-            .components(separatedBy: "\n")
+
+        let frontmatter = MarkdownFrontmatterParser.parse(normalized)
+        let body = frontmatter?.body ?? normalized
+        let lines = body.components(separatedBy: "\n")
         let blocks = parseLines(lines, references: &references)
-        return MarkdownDocument(blocks: blocks, references: references)
+        return MarkdownDocument(
+            blocks: blocks,
+            references: references,
+            frontmatter: frontmatter
+        )
     }
 
     // MARK: - Block loop

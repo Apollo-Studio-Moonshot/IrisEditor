@@ -42,7 +42,11 @@ enum MarkdownPlainText {
         let normalized = text
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
-        let lines = normalized.components(separatedBy: "\n")
+
+        // Frontmatter metadata is not part of the document's visible prose, so word and
+        // character counts exclude it just like the preview does.
+        let body = MarkdownFrontmatterParser.parse(normalized)?.body ?? normalized
+        let lines = body.components(separatedBy: "\n")
 
         var result: [String] = []
         var fenceMarker: String?

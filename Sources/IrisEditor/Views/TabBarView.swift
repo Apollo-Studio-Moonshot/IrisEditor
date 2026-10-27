@@ -62,7 +62,9 @@ struct TabBarView: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.borderless)
-            .help("New Tab (⌘T)")
+            .help(L10n.newTabHelp)
+            .accessibilityLabel(L10n.newTabMenu)
+            .accessibilityIdentifier("TabBar.NewTab")
             .padding(.trailing, 8)
 
             Spacer(minLength: 0)
@@ -101,7 +103,7 @@ private struct TabItemView: View {
                     .fill(isActive ? Color.accentColor : Color.secondary.opacity(0.75))
                     .frame(width: 6, height: 6)
                     .transition(.scale(scale: 0.2).combined(with: .opacity))
-                    .help("Unsaved changes")
+                    .help(L10n.unsavedChanges)
             }
 
             if showsCloseButton {
@@ -118,7 +120,9 @@ private struct TabItemView: View {
                         }
                 }
                 .buttonStyle(.borderless)
-                .help("Close “\(tab.displayName)”")
+                .help(L10n.closeTab(tab.displayName))
+                .accessibilityLabel(L10n.closeTab(tab.displayName))
+                .accessibilityIdentifier("TabBar.Close.\(tab.id.uuidString)")
                 .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
         }
@@ -143,6 +147,16 @@ private struct TabItemView: View {
         .onTapGesture {
             appState.selectTab(at: index)
         }
+        .draggable(tab.id.uuidString)
+        .dropDestination(for: String.self) { items, _ in
+            guard let raw = items.first,
+                  let id = UUID(uuidString: raw),
+                  let source = appState.tabs.firstIndex(where: { $0.id == id }) else {
+                return false
+            }
+            appState.moveTab(from: source, to: index)
+            return true
+        }
         .onHover { inside in
             if inside {
                 hoverModel.hoveredTab = tab.id
@@ -155,20 +169,27 @@ private struct TabItemView: View {
         .animation(.snappy(duration: 0.2), value: showsCloseButton)
         .animation(.snappy(duration: 0.2), value: tab.isDirty)
         .help(tab.fileURL?.path ?? tab.displayName)
+        .accessibilityLabel(L10n.tabAccessibilityLabel(tab.displayName))
+        .accessibilityValue(isActive ? L10n.selected : L10n.notSelected)
+        .accessibilityIdentifier("TabBar.Tab.\(tab.id.uuidString)")
         .contextMenu {
-            Button("Close") {
+            Button(L10n.duplicateTab) {
+                appState.duplicateTab(at: index)
+            }
+
+            Button(L10n.close) {
                 appState.closeTab(at: index)
             }
 
             if tab.fileURL != nil {
-                Button("Reveal in Finder") {
+                Button(L10n.revealInFinder) {
                     if let url = tab.fileURL {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
                 }
             }
 
-            Button("Copy Path") {
+            Button(L10n.copyPath) {
                 if let url = tab.fileURL {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(url.path, forType: .string)

@@ -4,7 +4,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// How the editor surface and the Markdown preview share the window.
-enum EditorViewMode: Equatable {
+enum EditorViewMode: String, Equatable {
     case source
     case split
     case preview
@@ -102,6 +102,55 @@ final class AppState: ObservableObject {
     /// Obsidian-style document outline sidebar panel.
     @Published var showOutline = false
 
+    /// Focus mode: hide chrome so only the document remains.
+    @Published var isZenMode = false
+
+    // MARK: - Vault
+
+    /// Which pane the unified sidebar shows.
+    @Published var sidebarTab: VaultPane = .files {
+        didSet { if sidebarTab == .tags || sidebarTab == .backlinks || sidebarTab == .graph { refreshVaultIfNeeded() } }
+    }
+
+    /// Folder that acts as the note vault. Defaults to the current document's folder.
+    @Published var vaultRootURL: URL?
+
+    @Published private(set) var vaultFiles: [VaultFile] = []
+    @Published private(set) var vaultTags: [VaultTag] = []
+    @Published private(set) var vaultBacklinks: [VaultBacklink] = []
+    @Published private(set) var vaultGraph = VaultGraph(nodes: [], edges: [])
+    @Published private(set) var vaultTemplates: [URL] = []
+
+    @Published var showVaultSearch = false
+    @Published var vaultSearchQuery = ""
+    @Published private(set) var vaultSearchResults: [VaultSearchResult] = []
+
+    // MARK: - Wiki autocomplete
+
+    @Published var showWikiSuggestions = false
+    @Published var wikiSuggestionIndex = 0
+    @Published private(set) var wikiSuggestions: [String] = []
+
+    // MARK: - Documents
+
+    /// Optional second document shown side-by-side.
+    @Published var secondDocument: EditorDocument?
+
+    @Published var showVersionHistory = false
+    @Published private(set) var versionHistory: [DocumentVersion] = []
+
+    // MARK: - AI
+
+    let ai = AIAssistant.shared
+    @Published private(set) var isAIWorking = false
+    @Published var aiStatusMessage: String?
+
+    private var vaultRefreshTask: Task<Void, Never>?
+    private var vaultRefreshScheduled = false
+    private var lastVaultRoot: URL?
+
+    private static let vaultRootDefaultsKey = "IrisEditor.VaultRoot"
+
     /// Obsidian-style fuzzy quick switcher for open tabs and recent files.
     @Published var showQuickSwitcher = false
 
@@ -140,11 +189,67 @@ final class AppState: ObservableObject {
     private var isUpdatingPanels = false
 
     private init() {
+        if let stored = UserDefaults.standard.string(forKey: Self.vaultRootDefaultsKey) {
+            vaultRootURL = URL(fileURLWithPath: stored)
+        }
         tabs = [document]
+        restoreSession()
         observeChanges()
+        refreshVault()
+        if let root = effectiveVaultRoot {
+            lastVaultRoot = root.standardizedFileURL
+        }
     }
 
     // MARK: - Document lifecycle
+
+    /// Vault used for the sidebar, search, tags, and backlinks.
+    var effectiveVaultRoot: URL? {
+        vaultRootURL ?? document.fileURL?.deletingLastPathComponent()
+    }
+
+    private func restoreSession() {
+        if let session = SessionStore.load() {
+            let restored: [EditorDocument] = session.openFiles.compactMap { path in
+                let url = URL(fileURLWithPath: path)
+                guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
+                    return nil
+                }
+                let reopened = EditorDocument()
+                reopened.text = contents
+                reopened.fileURL = url
+                reopened.isDirty = false
+                return reopened
+            }
+
+            if !restored.isEmpty {
+                tabs = restored
+                currentTabIndex = min(max(0, session.activeIndex), restored.count - 1)
+                document = tabs[currentTabIndex]
+                viewMode = EditorViewMode(rawValue: session.viewMode) ?? .source
+                showOutline = session.sidebarVisible
+                sidebarTab = VaultPane(rawValue: session.sidebarPane) ?? .files
+                if let vaultRoot = session.vaultRoot {
+                    vaultRootURL = URL(fileURLWithPath: vaultRoot)
+                }
+                return
+            }
+        }
+
+        // Crash recovery: reopen untitled drafts saved before the app exited unexpectedly.
+        let drafts = DraftStore.loadAll().filter { !$0.text.isEmpty }
+        guard !drafts.isEmpty else { return }
+        let recovered = drafts.map { draft -> EditorDocument in
+            let recoveredDocument = EditorDocument()
+            recoveredDocument.text = draft.text
+            recoveredDocument.draftID = draft.id
+            recoveredDocument.isDirty = true
+            return recoveredDocument
+        }
+        tabs = recovered
+        currentTabIndex = 0
+        document = recovered[0]
+    }
 
     func newDocument() {
         let fresh = EditorDocument()
@@ -278,6 +383,9 @@ final class AppState: ObservableObject {
                 currentTabIndex = tabs.count - 1
                 document = opened
             }
+            refreshVaultIfNeeded()
+            refreshVersionHistory()
+            saveSession()
             NSApp.activate(ignoringOtherApps: true)
         } catch {
             presentError("Couldn’t open “\(url.lastPathComponent)”.", error: error)
@@ -437,12 +545,133 @@ final class AppState: ObservableObject {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        let html = MarkdownHTMLExport.document(from: document.text, title: title)
+        let html = MarkdownHTMLExport.document(
+            from: document.text,
+            title: title,
+            using: settings.previewTheme
+        )
         do {
             try html.write(to: url, atomically: true, encoding: .utf8)
         } catch {
             presentError("Couldn't export “\(url.lastPathComponent)”.", error: error)
         }
+    }
+
+    func exportPDF() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.canCreateDirectories = true
+        let baseName = (document.displayName as NSString).deletingPathExtension
+        let title = baseName.isEmpty ? "Untitled" : baseName
+        panel.nameFieldStringValue = title + ".pdf"
+        panel.message = "Export the rendered document as a PDF."
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let html = MarkdownHTMLExport.document(
+            from: document.text,
+            title: title,
+            using: settings.previewTheme
+        )
+
+        Task { @MainActor in
+            do {
+                try await MarkdownPDFExporter.exportPDF(html: html, to: url)
+            } catch {
+                presentError("Couldn’t export the PDF.", error: error)
+            }
+        }
+    }
+
+    func exportRTF() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.rtf]
+        panel.canCreateDirectories = true
+        let baseName = (document.displayName as NSString).deletingPathExtension
+        let title = baseName.isEmpty ? "Untitled" : baseName
+        panel.nameFieldStringValue = title + ".rtf"
+        panel.message = "Export the rendered document as rich text."
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let html = MarkdownHTMLExport.document(
+            from: document.text,
+            title: title,
+            using: settings.previewTheme
+        )
+        guard let data = MarkdownRTFExporter.data(html: html) else {
+            presentInfo("Export failed", message: "The document could not be converted to RTF.")
+            return
+        }
+        do {
+            try data.write(to: url)
+        } catch {
+            presentError("Couldn’t export the RTF.", error: error)
+        }
+    }
+
+    func printDocument() {
+        let title = document.displayName
+        let html = MarkdownHTMLExport.document(from: document.text, title: title)
+        Task { @MainActor in
+            do {
+                try await MarkdownPDFExporter.printHTML(html, jobTitle: title)
+            } catch {
+                presentError("Couldn’t print the document.", error: error)
+            }
+        }
+    }
+
+    // MARK: - Quick capture
+
+    /// Saves text from the menu-bar capture panel into the vault's Inbox folder.
+    func saveQuickCapture(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        guard let root = effectiveVaultRoot else {
+            quickCaptureInNewTab(trimmed)
+            return
+        }
+
+        let inbox = root.appendingPathComponent("Inbox", isDirectory: true)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        let name = "Capture " + formatter.string(from: Date()) + ".md"
+        let url = inbox.appendingPathComponent(name)
+
+        do {
+            try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+            try (trimmed + "\n").write(to: url, atomically: true, encoding: .utf8)
+            open(url: url)
+            refreshVault()
+        } catch {
+            presentError("Couldn’t save the capture.", error: error)
+        }
+    }
+
+    /// Handles `iriseditor://capture?text=…` from Shortcuts or other apps.
+    func handleCaptureURL(_ url: URL) {
+        guard url.scheme == "iriseditor", url.host == "capture" else { return }
+        let text = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == "text" })?
+            .value ?? ""
+        if text.isEmpty {
+            NSApp.activate(ignoringOtherApps: true)
+        } else {
+            saveQuickCapture(text)
+        }
+    }
+
+    private func quickCaptureInNewTab(_ text: String) {
+        let captured = EditorDocument()
+        captured.text = text
+        captured.isDirty = true
+        withAnimation(.snappy(duration: 0.25)) {
+            tabs.append(captured)
+            currentTabIndex = tabs.count - 1
+            document = captured
+        }
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @discardableResult
@@ -465,6 +694,13 @@ final class AppState: ObservableObject {
             target.fileURL = resolved
             target.isDirty = false
             recordRecent(resolved)
+            VersionHistoryStore.record(text: target.text, fileURL: resolved)
+            if let draftID = target.draftID {
+                DraftStore.delete(id: draftID)
+                target.draftID = nil
+            }
+            refreshVaultIfNeeded()
+            saveSession()
             return true
         } catch {
             presentError("Couldn't save \"\(resolved.lastPathComponent)\".", error: error)
@@ -679,6 +915,538 @@ final class AppState: ObservableObject {
         withAnimation(.snappy(duration: 0.25)) {
             showOutline.toggle()
         }
+        refreshVaultIfNeeded()
+    }
+
+    func setSidebarPane(_ pane: VaultPane) {
+        withAnimation(.snappy(duration: 0.22)) {
+            sidebarTab = pane
+            if !showOutline { showOutline = true }
+        }
+        refreshVaultIfNeeded()
+    }
+
+    func toggleZenMode() {
+        withAnimation(.snappy(duration: 0.3)) {
+            isZenMode.toggle()
+        }
+        NotificationCenter.default.post(name: .focusEditor, object: nil)
+    }
+
+    // MARK: - Keybindings
+
+    /// Effective shortcut for a command, preferring the user override when valid.
+    func keyboardShortcut(for command: KeybindingCommand) -> KeyboardShortcut? {
+        guard let raw = settings.keybindingOverrides[command.rawValue] else {
+            return command.defaultShortcut
+        }
+        return KeybindingParser.shortcut(from: raw) ?? command.defaultShortcut
+    }
+
+    /// Human-readable shortcut, e.g. `"\u{2303}\u{2318}Z"`, for Settings rows.
+    func keybindingLabel(for command: KeybindingCommand) -> String {
+        let raw = settings.keybindingOverrides[command.rawValue] ?? command.defaultKeyString
+        return KeybindingParser.displayName(raw)
+    }
+
+    /// Stores a new shortcut, or clears it when `value` is nil. Returns false when the
+    /// string cannot be parsed or lacks a command/control modifier.
+    @discardableResult
+    func setKeybindingOverride(_ value: String?, for command: KeybindingCommand) -> Bool {
+        if let value {
+            guard let normalized = KeybindingParser.normalized(value) else { return false }
+            settings.keybindingOverrides[command.rawValue] = normalized
+        } else {
+            settings.keybindingOverrides.removeValue(forKey: command.rawValue)
+        }
+        settings.save()
+        NotificationCenter.default.post(name: .keybindingOverrideApplied, object: command)
+        return true
+    }
+
+    func resetKeybindings() {
+        guard !settings.keybindingOverrides.isEmpty else { return }
+        settings.keybindingOverrides.removeAll()
+        settings.save()
+        NotificationCenter.default.post(name: .keybindingOverrideApplied, object: nil)
+    }
+
+    // MARK: - Tabs
+
+    /// Duplicates a tab as a new untitled document with the same contents.
+    func duplicateTab(at index: Int) {
+        guard tabs.indices.contains(index) else { return }
+        let source = tabs[index]
+        let copy = EditorDocument()
+        copy.text = source.text
+        copy.fileURL = nil
+        copy.isDirty = true
+
+        withAnimation(.snappy(duration: 0.28, extraBounce: 0.04)) {
+            tabs.insert(copy, at: min(index + 1, tabs.count))
+            currentTabIndex = tabs.firstIndex(where: { $0.id == copy.id }) ?? 0
+            document = copy
+        }
+        saveSession()
+    }
+
+    /// Drag-reorders a tab, keeping the active document selected.
+    func moveTab(from source: Int, to destination: Int) {
+        guard tabs.indices.contains(source) else { return }
+        let target = min(max(0, destination), tabs.count - 1)
+        guard source != target else { return }
+
+        let active = document
+        withAnimation(.snappy(duration: 0.24)) {
+            let moved = tabs.remove(at: source)
+            tabs.insert(moved, at: target)
+            if let index = tabs.firstIndex(where: { $0.id == active.id }) {
+                currentTabIndex = index
+            }
+        }
+        saveSession()
+    }
+
+    // MARK: - Second pane
+
+    func openInSecondPane(url: URL? = nil) {
+        let targetURL = url ?? document.fileURL
+        let side = EditorDocument()
+        if let targetURL, let contents = try? String(contentsOf: targetURL, encoding: .utf8) {
+            side.text = contents
+            side.fileURL = targetURL
+            side.isDirty = false
+        } else {
+            side.text = document.text
+            side.isDirty = true
+        }
+        withAnimation(.snappy(duration: 0.26)) {
+            secondDocument = side
+        }
+    }
+
+    func closeSecondPane() {
+        withAnimation(.snappy(duration: 0.24)) {
+            secondDocument = nil
+        }
+    }
+
+    // MARK: - Vault
+
+    private func refreshVault() {
+        guard let root = effectiveVaultRoot else {
+            vaultFiles = []
+            vaultTags = []
+            vaultBacklinks = []
+            vaultGraph = VaultGraph(nodes: [], edges: [])
+            return
+        }
+
+        lastVaultRoot = root.standardizedFileURL
+        let capturedRoot = root
+        let currentURL = document.fileURL
+
+        vaultRefreshTask?.cancel()
+        vaultRefreshTask = Task.detached(priority: .utility) { [weak self] in
+            let files = VaultScanner.markdownFiles(in: capturedRoot)
+            let tags = VaultScanner.tags(in: files)
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                guard self.effectiveVaultRoot?.standardizedFileURL == capturedRoot.standardizedFileURL else {
+                    return
+                }
+                self.vaultFiles = files
+                self.vaultTags = tags
+                self.vaultBacklinks = currentURL.map {
+                    VaultScanner.backlinks(to: $0, in: files)
+                } ?? []
+                self.vaultGraph = VaultScanner.graph(around: currentURL, in: files)
+                self.refreshTemplates()
+                SpotlightIndexer.index(files: files)
+            }
+        }
+    }
+
+    /// Throttled refresh used by sidebar panes and file operations.
+    func refreshVaultIfNeeded() {
+        guard !vaultRefreshScheduled else { return }
+        vaultRefreshScheduled = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(220))
+            guard let self else { return }
+            self.vaultRefreshScheduled = false
+            self.refreshVault()
+        }
+    }
+
+    func refreshBacklinks() {
+        let url = document.fileURL
+        vaultBacklinks = url.map { VaultScanner.backlinks(to: $0, in: vaultFiles) } ?? []
+        vaultGraph = VaultScanner.graph(around: url, in: vaultFiles)
+    }
+
+    func chooseVaultFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a folder to use as your Iris vault."
+        panel.prompt = "Use Folder"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        // Drop results from the previous vault so stale notes stop appearing in
+        // Spotlight once the index is repopulated for the new root.
+        SpotlightIndexer.removeAll()
+        vaultRootURL = url
+        UserDefaults.standard.set(url.path, forKey: Self.vaultRootDefaultsKey)
+        refreshVault()
+    }
+
+    func useCurrentFolderAsVault() {
+        guard let folder = document.fileURL?.deletingLastPathComponent() else { return }
+        vaultRootURL = folder
+        UserDefaults.standard.set(folder.path, forKey: Self.vaultRootDefaultsKey)
+        refreshVault()
+    }
+
+    private func refreshTemplates() {
+        guard let root = effectiveVaultRoot else {
+            vaultTemplates = []
+            return
+        }
+        let folder = root.appendingPathComponent("Templates", isDirectory: true)
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: folder,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        vaultTemplates = contents
+            .filter { ["md", "markdown"].contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    func openDailyNote() {
+        guard let root = effectiveVaultRoot else {
+            presentInfo(
+                "No vault folder",
+                message: "Save this document or choose a vault folder before creating a daily note."
+            )
+            return
+        }
+
+        let url = DailyNotes.noteURL(for: Date(), in: root)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            do {
+                try FileManager.default.createDirectory(
+                    at: url.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try DailyNotes.defaultTemplate(date: Date())
+                    .write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                presentError("Couldn’t create today’s note.", error: error)
+                return
+            }
+        }
+        open(url: url)
+        refreshVault()
+    }
+
+    func applyTemplate(_ url: URL) {
+        guard let contents = try? String(contentsOf: url, encoding: .utf8) else { return }
+        insertSnippet(contents)
+    }
+
+    /// Creates a note next to the current file (or at the vault root) and opens it.
+    func createNote() {
+        guard let root = effectiveVaultRoot else {
+            presentInfo(
+                "No vault folder",
+                message: "Choose a vault folder before creating notes."
+            )
+            return
+        }
+
+        guard let name = promptForName(title: "New Note", placeholder: "Note name") else {
+            return
+        }
+        let base = (name as NSString).deletingPathExtension
+        let fileName = base.isEmpty ? "Untitled" : base
+        let url = root
+            .appendingPathComponent(fileName)
+            .appendingPathExtension(MarkdownFileType.defaultExtension)
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            presentInfo("Note already exists", message: "“\(fileName)” is already in this folder.")
+            return
+        }
+
+        do {
+            try "# \(fileName)\n".write(to: url, atomically: true, encoding: .utf8)
+            open(url: url)
+            refreshVault()
+        } catch {
+            presentError("Couldn’t create the note.", error: error)
+        }
+    }
+
+    func renameCurrentFile() {
+        guard let url = document.fileURL else { return }
+        let current = url.deletingPathExtension().lastPathComponent
+        guard let name = promptForName(
+            title: "Rename Note",
+            placeholder: current,
+            initial: current
+        ) else { return }
+
+        let base = (name as NSString).deletingPathExtension
+        guard !base.isEmpty else { return }
+        let destination = url.deletingLastPathComponent()
+            .appendingPathComponent(base)
+            .appendingPathExtension(MarkdownFileType.defaultExtension)
+
+        do {
+            try FileManager.default.moveItem(at: url, to: destination)
+            document.fileURL = destination
+            recordRecent(destination)
+            refreshVault()
+        } catch {
+            presentError("Couldn’t rename the note.", error: error)
+        }
+    }
+
+    func deleteCurrentFile() {
+        guard let url = document.fileURL else { return }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Delete “\(url.lastPathComponent)”?"
+        alert.informativeText = "This moves the file to the Trash."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            document.isDirty = false
+            closeTab(at: currentTabIndex)
+            refreshVault()
+        } catch {
+            presentError("Couldn’t delete the note.", error: error)
+        }
+    }
+
+    // MARK: - Vault search
+
+    func toggleVaultSearch() {
+        withAnimation(.snappy(duration: 0.2)) {
+            showVaultSearch.toggle()
+        }
+        if showVaultSearch {
+            showCommandPalette = false
+            showQuickSwitcher = false
+        } else {
+            vaultSearchQuery = ""
+            vaultSearchResults = []
+            NotificationCenter.default.post(name: .focusEditor, object: nil)
+        }
+    }
+
+    func updateVaultSearch(query: String) {
+        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
+            vaultSearchResults = []
+            return
+        }
+        let files = vaultFiles
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let results = VaultScanner.search(query, in: files)
+            await MainActor.run {
+                self?.vaultSearchResults = results
+            }
+        }
+    }
+
+    // MARK: - Wiki autocomplete
+
+    func updateWikiSuggestions(query: String) {
+        let candidates = VaultScanner.allWikiTargets(in: vaultFiles)
+        let normalized = query.lowercased().trimmingCharacters(in: .whitespaces)
+        let matches: [String]
+        if normalized.isEmpty {
+            matches = Array(candidates.prefix(8))
+        } else {
+            matches = candidates
+                .filter { $0.lowercased().contains(normalized) }
+                .sorted { lhs, rhs in
+                    let leftPrefix = lhs.lowercased().hasPrefix(normalized)
+                    let rightPrefix = rhs.lowercased().hasPrefix(normalized)
+                    if leftPrefix != rightPrefix { return leftPrefix }
+                    return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+                }
+        }
+        wikiSuggestions = Array(matches.prefix(8))
+        wikiSuggestionIndex = 0
+        showWikiSuggestions = !wikiSuggestions.isEmpty
+    }
+
+    func dismissWikiSuggestions() {
+        showWikiSuggestions = false
+        wikiSuggestions = []
+        wikiSuggestionIndex = 0
+    }
+
+    func moveWikiSuggestion(by delta: Int) {
+        guard !wikiSuggestions.isEmpty else { return }
+        wikiSuggestionIndex = (wikiSuggestionIndex + delta + wikiSuggestions.count)
+            % wikiSuggestions.count
+    }
+
+    var selectedWikiSuggestion: String? {
+        guard wikiSuggestions.indices.contains(wikiSuggestionIndex) else { return nil }
+        return wikiSuggestions[wikiSuggestionIndex]
+    }
+
+    // MARK: - Version history
+
+    func presentVersionHistory() {
+        versionHistory = VersionHistoryStore.versions(for: currentVersionKey)
+        withAnimation(.snappy(duration: 0.2)) {
+            showVersionHistory = true
+        }
+    }
+
+    func dismissVersionHistory() {
+        withAnimation(.snappy(duration: 0.2)) {
+            showVersionHistory = false
+        }
+        NotificationCenter.default.post(name: .focusEditor, object: nil)
+    }
+
+    var currentVersionKey: String {
+        VersionHistoryStore.key(forFileURL: document.fileURL)
+    }
+
+    func restoreVersion(_ version: DocumentVersion) {
+        document.text = version.text
+        document.isDirty = true
+        dismissVersionHistory()
+        NotificationCenter.default.post(name: .focusEditor, object: nil)
+    }
+
+    func refreshVersionHistory() {
+        versionHistory = VersionHistoryStore.versions(for: currentVersionKey)
+    }
+
+    // MARK: - Session
+
+    func saveSession() {
+        let session = EditorSession(
+            openFiles: tabs.compactMap { $0.fileURL?.path },
+            activeIndex: currentTabIndex,
+            viewMode: viewMode.rawValue,
+            sidebarVisible: showOutline,
+            sidebarPane: sidebarTab.rawValue,
+            vaultRoot: vaultRootURL?.path
+        )
+        SessionStore.save(session)
+    }
+
+    // MARK: - AI
+
+    func requestInlineCompletion() {
+        NotificationCenter.default.post(name: .aiInlineCompletionRequest, object: nil)
+    }
+
+    func requestRewriteSelection() {
+        NotificationCenter.default.post(name: .aiRewriteSelectionRequest, object: nil)
+    }
+
+    func pasteAsMarkdown() {
+        NotificationCenter.default.post(name: .pasteAsMarkdown, object: nil)
+    }
+
+    func summarizeDocument() {
+        let text = document.text
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        aiStatusMessage = "Summarizing…"
+        isAIWorking = true
+        Task { @MainActor in
+            defer { isAIWorking = false }
+            do {
+                let summary = try await ai.summarize(text)
+                presentInfo("Summary", message: summary)
+                aiStatusMessage = nil
+            } catch {
+                aiStatusMessage = nil
+                presentError("Summarize failed", error: error)
+            }
+        }
+    }
+
+    func generateTitleAndTags() {
+        let text = document.text
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        aiStatusMessage = "Generating title and tags…"
+        isAIWorking = true
+        Task { @MainActor in
+            defer { isAIWorking = false }
+            do {
+                let result = try await ai.titleAndTags(for: text)
+                applyMetadata(title: result.title, tags: result.tags)
+                aiStatusMessage = nil
+            } catch {
+                aiStatusMessage = nil
+                presentError("Couldn’t generate metadata", error: error)
+            }
+        }
+    }
+
+    /// Rewrites (or inserts) the frontmatter block with the generated title and tags.
+    private func applyMetadata(title: String, tags: [String]) {
+        let text = document.text
+        let body = MarkdownFrontmatterParser.parse(text)?.body ?? text
+        var lines: [String] = ["---", "title: \(title)"]
+        if !tags.isEmpty {
+            lines.append("tags:")
+            for tag in tags {
+                lines.append("  - \(tag)")
+            }
+        }
+        lines.append("---")
+        let updated = lines.joined(separator: "\n") + "\n\n" + body
+        document.text = updated
+        document.isDirty = true
+    }
+
+    private func promptForName(
+        title: String,
+        placeholder: String,
+        initial: String = ""
+    ) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = placeholder
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = initial
+        field.placeholderString = placeholder
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    private func presentInfo(_ title: String, message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     // MARK: - View commands
@@ -717,6 +1485,41 @@ final class AppState: ObservableObject {
         )
     }
 
+    /// Toggles a task list checkbox in the source from the preview, matching the item by its
+    /// visible text. This keeps the preview interactive without exposing raw ranges to views.
+    func toggleTask(text: String) {
+        let target = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return }
+
+        let pattern = try? NSRegularExpression(
+            pattern: #"^([ \t]*[-*+][ \t]+\[)([ xX])(\][ \t]+)(.*)$"#
+        )
+        var lines = document.text.components(separatedBy: "\n")
+
+        for (index, line) in lines.enumerated() {
+            guard let match = pattern?.firstMatch(
+                in: line,
+                range: NSRange(location: 0, length: (line as NSString).length)
+            ),
+            let labelRange = Range(match.range(at: 4), in: line) else {
+                continue
+            }
+
+            let label = String(line[labelRange]).trimmingCharacters(in: .whitespaces)
+            guard label == target else { continue }
+
+            guard let markerRange = Range(match.range(at: 2), in: line) else { return }
+            let current = line[markerRange]
+            lines[index] = line.replacingCharacters(
+                in: markerRange,
+                with: current == " " ? "x" : " "
+            )
+            document.text = lines.joined(separator: "\n")
+            document.isDirty = true
+            return
+        }
+    }
+
     // MARK: - Observation
 
     private func bindDocument() {
@@ -731,6 +1534,49 @@ final class AppState: ObservableObject {
             .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
             .sink { settings in
                 settings.save()
+            }
+            .store(in: &cancellables)
+
+        // Persist the session whenever the visible document layout changes.
+        Publishers.MergeMany(
+            $currentTabIndex.map { _ in () }.eraseToAnyPublisher(),
+            $viewMode.map { _ in () }.eraseToAnyPublisher(),
+            $showOutline.map { _ in () }.eraseToAnyPublisher(),
+            $sidebarTab.map { _ in () }.eraseToAnyPublisher(),
+            $vaultRootURL.map { _ in () }.eraseToAnyPublisher()
+        )
+        .debounce(for: .milliseconds(350), scheduler: RunLoop.main)
+        .sink { [weak self] in
+            self?.saveSession()
+        }
+        .store(in: &cancellables)
+
+        $vaultSearchQuery
+            .debounce(for: .milliseconds(180), scheduler: RunLoop.main)
+            .sink { [weak self] query in
+                self?.updateVaultSearch(query: query)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .wikiAutocompleteRequest)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] note in
+                guard let query = note.userInfo?["query"] as? String else {
+                    self?.dismissWikiSuggestions()
+                    return
+                }
+                self?.updateWikiSuggestions(query: query)
+            }
+            .store(in: &cancellables)
+
+        $document
+            .dropFirst()
+            .debounce(for: .milliseconds(400), scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.refreshBacklinks()
+                self.refreshVersionHistory()
+                self.refreshVaultIfNeeded()
             }
             .store(in: &cancellables)
 
@@ -762,6 +1608,31 @@ final class AppState: ObservableObject {
                     return
                 }
                 _ = self.save(to: url)
+            }
+            .store(in: &cancellables)
+
+        // Crash recovery for untitled drafts: persist the buffer shortly after typing stops.
+        textChanges
+            .dropFirst()
+            .debounce(for: .seconds(1.5), scheduler: RunLoop.main)
+            .sink { [weak self] change in
+                guard let self,
+                      change.id == self.document.id,
+                      self.document.fileURL == nil,
+                      !change.text.isEmpty else {
+                    return
+                }
+                if self.document.draftID == nil {
+                    self.document.draftID = UUID()
+                }
+                guard let draftID = self.document.draftID else { return }
+                DraftStore.save(Draft(
+                    id: draftID,
+                    title: self.document.displayName,
+                    text: change.text,
+                    updatedAt: Date(),
+                    restoredFromFile: nil
+                ))
             }
             .store(in: &cancellables)
 
@@ -826,4 +1697,10 @@ extension Notification.Name {
     static let toggleMarkdownFormat = Notification.Name("IrisEditor.toggleMarkdownFormat")
     static let insertSnippet = Notification.Name("IrisEditor.insertSnippet")
     static let requestText = Notification.Name("IrisEditor.requestText")
+    static let wikiAutocompleteRequest = Notification.Name("IrisEditor.wikiAutocompleteRequest")
+    static let wikiAutocompleteAccept = Notification.Name("IrisEditor.wikiAutocompleteAccept")
+    static let aiInlineCompletionRequest = Notification.Name("IrisEditor.aiInlineCompletionRequest")
+    static let aiRewriteSelectionRequest = Notification.Name("IrisEditor.aiRewriteSelectionRequest")
+    static let pasteAsMarkdown = Notification.Name("IrisEditor.pasteAsMarkdown")
+    static let keybindingOverrideApplied = Notification.Name("IrisEditor.keybindingOverrideApplied")
 }

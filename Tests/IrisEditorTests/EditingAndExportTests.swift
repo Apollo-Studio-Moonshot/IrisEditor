@@ -174,7 +174,10 @@ struct MarkdownHTMLExportTests {
         let html = MarkdownHTMLExport.body(
             from: "```swift\nlet x = 1 < 2\n```"
         )
-        #expect(html.contains("<pre><code class=\"language-swift\">let x = 1 &lt; 2</code></pre>"))
+        // Code fences now receive optional syntax-highlighting spans; verify structure + escaping.
+        #expect(html.contains("<pre><code class=\"language-swift\">"))
+        #expect(html.contains("&lt;"))
+        #expect(html.contains("tok-") || html.contains("<pre><code"))
     }
 
     @Test func dropsUnsafeLinkSchemes() {

@@ -9,12 +9,19 @@ import SwiftUI
 struct MarkdownPreviewView: View {
     let markdown: String
     var baseURL: URL? = nil
+    var theme: PreviewTheme = .system
+    var onToggleTask: (@Sendable (String) -> Void)? = nil
 
     var body: some View {
         let document = MarkdownBlockParser.parseDocument(markdown)
 
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
+                if let frontmatter = document.frontmatter, !frontmatter.fields.isEmpty {
+                    MarkdownPropertiesCard(frontmatter: frontmatter)
+                        .padding(.bottom, 4)
+                }
+
                 ForEach(Array(document.blocks.enumerated()), id: \.offset) { _, block in
                     MarkdownBlockView(
                         block: block,
@@ -29,8 +36,38 @@ struct MarkdownPreviewView: View {
             .padding(20)
         }
         .background {
-            GlassBackdrop(style: .regular, cornerRadius: 0)
+            ZStack {
+                theme.background
+                GlassBackdrop(style: .regular, cornerRadius: 0)
+                    .opacity(theme == .system ? 1 : 0.35)
+            }
         }
+        .foregroundStyle(theme.text)
+        .environment(\.previewTheme, theme)
+        .environment(\.togglePreviewTask, onToggleTask)
+        .environment(\.colorScheme, theme.isDark ? .dark : .light)
+    }
+}
+
+// MARK: - Preview environment
+
+private struct PreviewThemeKey: EnvironmentKey {
+    static let defaultValue: PreviewTheme = .system
+}
+
+private struct TogglePreviewTaskKey: EnvironmentKey {
+    static let defaultValue: (@Sendable (String) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    fileprivate var previewTheme: PreviewTheme {
+        get { self[PreviewThemeKey.self] }
+        set { self[PreviewThemeKey.self] = newValue }
+    }
+
+    fileprivate var togglePreviewTask: (@Sendable (String) -> Void)? {
+        get { self[TogglePreviewTaskKey.self] }
+        set { self[TogglePreviewTaskKey.self] = newValue }
     }
 }
 
@@ -38,6 +75,9 @@ private struct MarkdownBlockView: View {
     let block: MarkdownBlock
     let references: [String: MarkdownLinkReference]
     var baseURL: URL? = nil
+
+    @Environment(\.previewTheme) private var theme
+    @Environment(\.togglePreviewTask) private var onToggleTask
 
     var body: some View {
         switch block {
@@ -69,7 +109,11 @@ private struct MarkdownBlockView: View {
             }
 
         case .codeBlock(let language, let lines):
-            codeSurface(lines: lines, label: language)
+            if language?.lowercased() == "mermaid" {
+                MermaidBlockView(source: lines.joined(separator: "\n"))
+            } else {
+                codeSurface(lines: lines, label: language)
+            }
 
         case .list(let ordered, let start, let items):
             list(ordered: ordered, start: start, items: items)
@@ -96,7 +140,9 @@ private struct MarkdownBlockView: View {
     private func paragraph(_ text: String) -> some View {
         let inlines = MarkdownInlineParser(references: references).parse(text)
 
-        if let image = standaloneImage(in: inlines) {
+        if let latex = displayMath(text) {
+            mathBlock(latex)
+        } else if let image = standaloneImage(in: inlines) {
             MarkdownImageView(
                 source: image.source,
                 alt: image.alt,
@@ -112,6 +158,39 @@ private struct MarkdownBlockView: View {
         }
     }
 
+    /// Recognizes `$$ … $$` and `\\[ … \\]` paragraphs as display math.
+    private func displayMath(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("$$"), trimmed.hasSuffix("$$"), trimmed.count > 4 {
+            return String(trimmed.dropFirst(2).dropLast(2))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if trimmed.hasPrefix("\\["), trimmed.hasSuffix("\\]"), trimmed.count > 4 {
+            return String(trimmed.dropFirst(2).dropLast(2))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    private func mathBlock(_ latex: String) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Text(LaTeXMathRenderer.render(latex))
+                .font(.system(size: 17, design: .serif))
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+        }
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.surface.opacity(0.55))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(theme.border.opacity(0.6), lineWidth: 0.5)
+        }
+    }
+
     private func list(
         ordered: Bool,
         start: Int,
@@ -119,22 +198,36 @@ private struct MarkdownBlockView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                HStack(alignment: .top, spacing: 8) {
-                    Group {
-                        if ordered {
-                            Text("\(start + index).")
-                                .monospacedDigit()
-                        } else {
-                            Text("•")
-                        }
-                    }
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: ordered ? 18 : 10, alignment: .trailing)
-                    .padding(.top, 1)
+                listItem(item, ordered: ordered, index: index, start: start)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func listItem(
+        _ item: MarkdownListItem,
+        ordered: Bool,
+        index: Int,
+        start: Int
+    ) -> some View {
+        if let task = taskInfo(item) {
+            Button {
+                onToggleTask?(task.text)
+            } label: {
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: task.checked ? "checkmark.square.fill" : "square")
+                        .font(.system(size: 13))
+                        .foregroundStyle(task.checked ? Color.accentColor : Color.secondary)
+                        .padding(.top, 1)
 
                     VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(item.blocks.enumerated()), id: \.offset) { _, child in
+                        inline(size: 14)
+                            .text(MarkdownInlineParser(references: references).parse(task.text))
+                            .font(.system(size: 14))
+                            .strikethrough(task.checked, color: .secondary)
+                            .foregroundStyle(task.checked ? Color.secondary : Color.primary)
+
+                        ForEach(Array(item.blocks.dropFirst().enumerated()), id: \.offset) { _, child in
                             MarkdownBlockView(
                                 block: child,
                                 references: references,
@@ -143,12 +236,65 @@ private struct MarkdownBlockView: View {
                         }
                     }
                 }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(task.text)
+            .accessibilityValue(task.checked ? "Completed" : "Not completed")
+        } else {
+            HStack(alignment: .top, spacing: 8) {
+                Group {
+                    if ordered {
+                        Text("\(start + index).")
+                            .monospacedDigit()
+                    } else {
+                        Text("•")
+                    }
+                }
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: ordered ? 18 : 10, alignment: .trailing)
+                .padding(.top, 1)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(item.blocks.enumerated()), id: \.offset) { _, child in
+                        MarkdownBlockView(
+                            block: child,
+                            references: references,
+                            baseURL: baseURL
+                        )
+                    }
+                }
             }
         }
     }
 
+    private struct TaskInfo {
+        let checked: Bool
+        let text: String
+    }
+
+    private func taskInfo(_ item: MarkdownListItem) -> TaskInfo? {
+        guard case .paragraph(let raw)? = item.blocks.first else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let regex = try? NSRegularExpression(pattern: #"^\[([ xX])\][ \t]+(.+)$"#, options: [.dotMatchesLineSeparators]),
+              let match = regex.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)),
+              let markerRange = Range(match.range(at: 1), in: trimmed),
+              let textRange = Range(match.range(at: 2), in: trimmed) else {
+            return nil
+        }
+        let marker = String(trimmed[markerRange])
+        return TaskInfo(
+            checked: marker.lowercased() == "x",
+            text: String(trimmed[textRange])
+        )
+    }
+
     private func codeSurface(lines: [String], label: String?) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        let code = lines.joined(separator: "\n")
+        let language = label?.lowercased()
+
+        return ScrollView(.horizontal, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 2) {
                 if let label, !label.isEmpty {
                     Text(label)
@@ -156,19 +302,53 @@ private struct MarkdownBlockView: View {
                         .foregroundStyle(.tertiary)
                         .padding(.bottom, 2)
                 }
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    Text(line.isEmpty ? " " : line)
-                        .font(.system(size: 12.5, design: .monospaced))
-                        .fixedSize(horizontal: true, vertical: false)
-                }
+                Text(highlightedCode(code, language: language))
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .fixedSize(horizontal: true, vertical: false)
+                    .textSelection(.enabled)
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .quaternaryLabelColor).opacity(0.5))
+                .fill(theme.surface.opacity(0.7))
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(theme.border.opacity(0.5), lineWidth: 0.5)
+        }
+    }
+
+    private func highlightedCode(_ code: String, language: String?) -> AttributedString {
+        let baseAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular),
+            .foregroundColor: NSColor(theme.text),
+        ]
+        let attributed = NSMutableAttributedString(string: code, attributes: baseAttributes)
+
+        for token in CodeSyntaxHighlighter.tokens(in: code, language: language) {
+            guard NSMaxRange(token.range) <= attributed.length else { continue }
+            attributed.addAttribute(
+                .foregroundColor,
+                value: color(for: token.kind),
+                range: token.range
+            )
+        }
+        return AttributedString(attributed)
+    }
+
+    private func color(for kind: CodeSyntaxHighlighter.TokenKind) -> NSColor {
+        switch kind {
+        case .keyword: return .systemPink
+        case .string: return .systemRed
+        case .comment: return .tertiaryLabelColor
+        case .number: return .systemBlue
+        case .type: return .systemTeal
+        case .function: return .systemPurple
+        case .property: return .systemOrange
+        case .punctuation, .plain: return NSColor(theme.text)
+        }
     }
 
     private func inline(size: CGFloat) -> MarkdownInlineText {
@@ -232,7 +412,237 @@ private struct MarkdownBlockView: View {
     }
 }
 
-// MARK: - Inline text
+// MARK: - Mermaid
+
+/// Renders a small `flowchart TD/LR` graph with a native Canvas. Unsupported diagrams fall
+/// back to a clearly labelled code surface rather than showing raw Mermaid syntax unmarked.
+private struct MermaidBlockView: View {
+    let source: String
+    @Environment(\.previewTheme) private var theme
+
+    var body: some View {
+        if let chart = MermaidParser.flowchart(source) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Mermaid", systemImage: "chart.bar.doc.horizontal")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+
+                MermaidDiagramView(chart: chart)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Mermaid (preview simplified — diagram not recognized)",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+
+                Text(source)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .textSelection(.enabled)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.surface.opacity(0.7))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(theme.border.opacity(0.5), lineWidth: 0.5)
+            }
+        }
+    }
+}
+
+private struct MermaidDiagramView: View {
+    let chart: MermaidParser.Flowchart
+    @Environment(\.previewTheme) private var theme
+
+    private let nodeWidth: CGFloat = 132
+    private let nodeHeight: CGFloat = 30
+    private let columnGap: CGFloat = 34
+    private let rowGap: CGFloat = 58
+    private let padding: CGFloat = 22
+
+    var body: some View {
+        let levels = computeLevels()
+        let maxPerLevel = levels.values.map(\.count).max() ?? 1
+        let levelCount = max(1, (levels.keys.max() ?? 0) + 1)
+        let isHorizontal = chart.direction == .leftRight
+
+        let width = isHorizontal
+            ? CGFloat(levelCount) * (nodeWidth + columnGap) + padding * 2
+            : CGFloat(maxPerLevel) * (nodeWidth + columnGap) + padding * 2
+        let height = isHorizontal
+            ? CGFloat(maxPerLevel) * (nodeHeight + rowGap) + padding * 2
+            : CGFloat(levelCount) * (nodeHeight + rowGap) + padding * 2
+
+        let positions = computePositions(
+            levels: levels,
+            maxPerLevel: maxPerLevel,
+            levelCount: levelCount,
+            isHorizontal: isHorizontal,
+            width: width,
+            height: height
+        )
+
+        return ScrollView([.horizontal, .vertical], showsIndicators: false) {
+            Canvas { context, _ in
+                for edge in chart.edges {
+                    guard let from = positions[edge.from], let to = positions[edge.to] else {
+                        continue
+                    }
+                    drawEdge(edge, from: from, to: to, in: &context)
+                }
+
+                for node in chart.nodes {
+                    guard let point = positions[node.id] else { continue }
+                    let rect = CGRect(
+                        x: point.x - nodeWidth / 2,
+                        y: point.y - nodeHeight / 2,
+                        width: nodeWidth,
+                        height: nodeHeight
+                    )
+                    let shape = Path(roundedRect: rect, cornerRadius: 7)
+                    context.fill(shape, with: .color(theme.surface))
+                    context.stroke(shape, with: .color(theme.border), lineWidth: 0.8)
+                    context.draw(
+                        Text(node.label.isEmpty ? node.id : node.label)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(theme.text),
+                        at: point
+                    )
+                }
+            }
+            .frame(width: width, height: height)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.surface.opacity(0.35))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(theme.border.opacity(0.45), lineWidth: 0.5)
+        }
+    }
+
+    private func drawEdge(
+        _ edge: MermaidParser.Flowchart.Edge,
+        from: CGPoint,
+        to: CGPoint,
+        in context: inout GraphicsContext
+    ) {
+        var path = Path()
+        path.move(to: from)
+        path.addLine(to: to)
+        context.stroke(
+            path,
+            with: .color(.secondary.opacity(0.55)),
+            style: StrokeStyle(lineWidth: 1.1, lineJoin: .round)
+        )
+
+        // Arrowhead
+        let angle = atan2(to.y - from.y, to.x - from.x)
+        let tip = to
+        let size: CGFloat = 6
+        var arrow = Path()
+        arrow.move(to: CGPoint(
+            x: tip.x - size * cos(angle - .pi / 7),
+            y: tip.y - size * sin(angle - .pi / 7)
+        ))
+        arrow.addLine(to: tip)
+        arrow.addLine(to: CGPoint(
+            x: tip.x - size * cos(angle + .pi / 7),
+            y: tip.y - size * sin(angle + .pi / 7)
+        ))
+        context.fill(arrow, with: .color(.secondary.opacity(0.7)))
+
+        if !edge.label.isEmpty {
+            context.draw(
+                Text(edge.label)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary),
+                at: CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 - 8)
+            )
+        }
+    }
+
+    private func computeLevels() -> [Int: [String]] {
+        var adjacency: [String: [String]] = [:]
+        var indegree: [String: Int] = [:]
+        for node in chart.nodes {
+            adjacency[node.id] = []
+            indegree[node.id] = 0
+        }
+        for edge in chart.edges {
+            adjacency[edge.from, default: []].append(edge.to)
+            indegree[edge.to, default: 0] += 1
+        }
+
+        var level: [String: Int] = [:]
+        var queue: [String] = chart.nodes
+            .filter { (indegree[$0.id] ?? 0) == 0 }
+            .map(\.id)
+        if queue.isEmpty, let first = chart.nodes.first {
+            queue = [first.id]
+        }
+        for id in queue { level[id] = 0 }
+
+        var cursor = 0
+        while cursor < queue.count {
+            let current = queue[cursor]
+            cursor += 1
+            for next in adjacency[current] ?? [] {
+                let candidate = (level[current] ?? 0) + 1
+                if candidate > (level[next] ?? -1) {
+                    level[next] = candidate
+                    queue.append(next)
+                }
+            }
+        }
+        for node in chart.nodes where level[node.id] == nil {
+            level[node.id] = 0
+        }
+
+        var grouped: [Int: [String]] = [:]
+        for node in chart.nodes {
+            grouped[level[node.id] ?? 0, default: []].append(node.id)
+        }
+        return grouped
+    }
+
+    private func computePositions(
+        levels: [Int: [String]],
+        maxPerLevel: Int,
+        levelCount: Int,
+        isHorizontal: Bool,
+        width: CGFloat,
+        height: CGFloat
+    ) -> [String: CGPoint] {
+        var positions: [String: CGPoint] = [:]
+
+        for (levelIndex, ids) in levels {
+            for (index, id) in ids.enumerated() {
+                let alongLevel = CGFloat(index) - CGFloat(ids.count - 1) / 2
+                if isHorizontal {
+                    let x = padding + nodeWidth / 2 + CGFloat(levelIndex) * (nodeWidth + columnGap)
+                    let y = height / 2 + alongLevel * (nodeHeight + rowGap)
+                    positions[id] = CGPoint(x: x, y: y)
+                } else {
+                    let y = padding + nodeHeight / 2 + CGFloat(levelIndex) * (nodeHeight + rowGap)
+                    let x = width / 2 + alongLevel * (nodeWidth + columnGap)
+                    positions[id] = CGPoint(x: x, y: y)
+                }
+            }
+        }
+        return positions
+    }
+}
+
 
 /// Builds a native `AttributedString` from parsed inline spans.
 private struct MarkdownInlineText {
@@ -264,9 +674,13 @@ private struct MarkdownInlineText {
         for inline in inlines {
             switch inline {
             case .text(let value):
-                var run = AttributedString(value)
-                applyPresentation(&run, bold: bold, italic: italic, strikethrough: strikethrough)
-                result.append(run)
+                appendText(
+                    value,
+                    to: &result,
+                    bold: bold,
+                    italic: italic,
+                    strikethrough: strikethrough
+                )
 
             case .emphasis(let children):
                 append(
@@ -340,6 +754,54 @@ private struct MarkdownInlineText {
                 run.foregroundColor = .secondary
                 result.append(run)
             }
+        }
+    }
+
+    /// Appends plain text while rendering inline `$…$` math as Unicode serif runs.
+    private func appendText(
+        _ value: String,
+        to result: inout AttributedString,
+        bold: Bool,
+        italic: Bool,
+        strikethrough: Bool
+    ) {
+        let pattern = try? NSRegularExpression(pattern: #"(?<!\\)\$([^$\n]+)\$"#)
+        let ns = value as NSString
+        let matches = pattern?.matches(
+            in: value,
+            range: NSRange(location: 0, length: ns.length)
+        ) ?? []
+
+        guard !matches.isEmpty else {
+            var run = AttributedString(value)
+            applyPresentation(&run, bold: bold, italic: italic, strikethrough: strikethrough)
+            result.append(run)
+            return
+        }
+
+        var cursor = 0
+        for match in matches {
+            if match.range.location > cursor {
+                let plain = ns.substring(
+                    with: NSRange(location: cursor, length: match.range.location - cursor)
+                )
+                var run = AttributedString(plain)
+                applyPresentation(&run, bold: bold, italic: italic, strikethrough: strikethrough)
+                result.append(run)
+            }
+
+            let latex = ns.substring(with: match.range(at: 1))
+            var math = AttributedString(LaTeXMathRenderer.render(latex))
+            math.font = .system(size: size, design: .serif).italic()
+            applyPresentation(&math, bold: bold, italic: true, strikethrough: strikethrough)
+            result.append(math)
+            cursor = match.range.location + match.range.length
+        }
+
+        if cursor < ns.length {
+            var run = AttributedString(ns.substring(from: cursor))
+            applyPresentation(&run, bold: bold, italic: italic, strikethrough: strikethrough)
+            result.append(run)
         }
     }
 

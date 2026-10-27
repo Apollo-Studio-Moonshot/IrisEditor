@@ -10,25 +10,13 @@ struct DocumentOutlineView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
-
-            Divider()
-
             if model.headings.isEmpty {
                 emptyState
             } else {
                 headingList
             }
         }
-        .frame(width: 230)
-        .background {
-            GlassBackdrop(style: .regular, cornerRadius: 0, interactive: true)
-        }
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor).opacity(0.6))
-                .frame(width: 0.5)
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             model.refresh(text: appState.document.text)
         }
@@ -38,32 +26,6 @@ struct DocumentOutlineView: View {
         .onChange(of: appState.document.text) { _, newText in
             model.refresh(text: newText)
         }
-    }
-
-    private var header: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "list.bullet.indent")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            Text("Outline")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            Button {
-                appState.toggleOutline()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-            }
-            .buttonStyle(.borderless)
-            .help("Close Outline (⇧⌘O)")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     private var emptyState: some View {

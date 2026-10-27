@@ -14,6 +14,9 @@ final class EditorDocument: ObservableObject, Identifiable {
     @Published var fileURL: URL?
     @Published var isDirty: Bool = false
 
+    /// Identity of the crash-recovery draft backing an untitled document.
+    var draftID: UUID?
+
     private var cachedLineIndex: TextLineIndex?
     private var visibleWordCount = 0
     private var visibleCharacterCount = 0

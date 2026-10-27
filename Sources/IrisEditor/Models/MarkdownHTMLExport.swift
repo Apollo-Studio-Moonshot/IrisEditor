@@ -6,7 +6,14 @@ import Foundation
 enum MarkdownHTMLExport {
 
     /// A complete HTML document with embedded, appearance-aware styling.
-    static func document(from markdown: String, title: String) -> String {
+    ///
+    /// Pass a `PreviewTheme` to make the exported page match the palette the user
+    /// selected for the in-app preview. The default keeps the system-aware palette.
+    static func document(
+        from markdown: String,
+        title: String,
+        using theme: PreviewTheme = .system
+    ) -> String {
         let safeTitle = escape(title)
         return """
         <!DOCTYPE html>
@@ -16,25 +23,7 @@ enum MarkdownHTMLExport {
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>\(safeTitle)</title>
         <style>
-        :root {
-          color-scheme: light dark;
-          --text: #1c1c1e;
-          --muted: #6c6c70;
-          --background: #ffffff;
-          --surface: #f2f2f7;
-          --border: #d1d1d6;
-          --accent: #6c5ce7;
-        }
-        @media (prefers-color-scheme: dark) {
-          :root {
-            --text: #f2f2f7;
-            --muted: #a1a1a6;
-            --background: #1c1c1e;
-            --surface: #2c2c2e;
-            --border: #3a3a3c;
-            --accent: #a29bfe;
-          }
-        }
+        \(paletteCSS(for: theme))
         * { box-sizing: border-box; }
         body {
           margin: 0;
@@ -76,6 +65,56 @@ enum MarkdownHTMLExport {
         th { background: var(--surface); text-align: left; }
         hr { border: 0; border-top: 1px solid var(--border); margin: 2em 0; }
         img { max-width: 100%; height: auto; border-radius: 8px; }
+        .tok-keyword { color: #c0398f; }
+        .tok-string { color: #c0392b; }
+        .tok-comment { color: #8e8e93; font-style: italic; }
+        .tok-number { color: #2d6cdf; }
+        .tok-type { color: #0a8f8f; }
+        .tok-function { color: #7b4fd1; }
+        .tok-property { color: #c46a1b; }
+        .math-block {
+          margin: 1em 0;
+          padding: 0.8em 1em;
+          text-align: center;
+          font-family: ui-serif, "New York", Georgia, serif;
+          font-size: 1.12em;
+          background: var(--surface);
+          border-radius: 8px;
+          overflow-x: auto;
+        }
+        .math-inline { font-family: ui-serif, "New York", Georgia, serif; font-style: italic; }
+        .task-list { list-style: none; padding-left: 0.4em; }
+        .task-list li.task { list-style: none; }
+        .task-list input[type="checkbox"] { margin-right: 0.35em; }
+        .mermaid { margin: 1em 0; overflow-x: auto; text-align: center; }
+        .mermaid svg { max-width: 100%; height: auto; }
+        .properties {
+          margin: 0 0 2em;
+          padding: 0.9em 1.1em;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          background: color-mix(in srgb, var(--surface) 70%, transparent);
+        }
+        .properties-title {
+          margin: 0 0 0.55em;
+          font-size: 0.72em;
+          font-weight: 600;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: var(--muted);
+        }
+        .properties dl { margin: 0; display: grid; grid-template-columns: 8.5em 1fr; gap: 0.35em 0.8em; }
+        .properties dt { color: var(--muted); font-size: 0.85em; }
+        .properties dd { margin: 0; font-size: 0.9em; }
+        .tag {
+          display: inline-block;
+          margin: 0 0.3em 0.3em 0;
+          padding: 0.1em 0.55em;
+          border-radius: 999px;
+          background: color-mix(in srgb, var(--accent) 16%, transparent);
+          color: var(--accent);
+          font-size: 0.82em;
+        }
         </style>
         </head>
         <body>
@@ -90,7 +129,113 @@ enum MarkdownHTMLExport {
     /// Just the rendered `<main>` contents, useful for tests or embedding.
     static func body(from markdown: String) -> String {
         let parsed = MarkdownBlockParser.parseDocument(markdown)
-        return render(blocks: parsed.blocks, references: parsed.references)
+        var output = ""
+        if let frontmatter = parsed.frontmatter, !frontmatter.fields.isEmpty {
+            output += renderProperties(frontmatter)
+            output += "\n"
+        }
+        output += render(blocks: parsed.blocks, references: parsed.references)
+        return output
+    }
+
+    /// Rendered body wrapped in a theme marker, for callers that embed the export
+    /// into their own page and want the preview palette applied via CSS variables.
+    static func export(body markdown: String, using theme: PreviewTheme = .system) -> String {
+        """
+        <div class="iris-export theme-\(theme.rawValue)">
+        \(body(from: markdown))
+        </div>
+        """
+    }
+
+    /// CSS custom properties for a preview theme.
+    ///
+    /// `.system` follows the reader's light/dark appearance through
+    /// `prefers-color-scheme`; the named themes pin `color-scheme` so the page
+    /// always renders with the palette chosen in Settings.
+    private static func paletteCSS(for theme: PreviewTheme) -> String {
+        if theme == .system {
+            return """
+            :root {
+              color-scheme: light dark;
+              --text: #1c1c1e;
+              --muted: #6c6c70;
+              --background: #ffffff;
+              --surface: #f2f2f7;
+              --border: #d1d1d6;
+              --accent: #6c5ce7;
+              --is-dark: 0;
+            }
+            @media (prefers-color-scheme: dark) {
+              :root {
+                color-scheme: dark;
+                --text: #f2f2f7;
+                --muted: #a1a1a6;
+                --background: #1c1c1e;
+                --surface: #2c2c2e;
+                --border: #3a3a3c;
+                --accent: #a29bfe;
+                --is-dark: 1;
+              }
+            }
+            """
+        }
+
+        let palette: (text: String, muted: String, background: String, surface: String, border: String, accent: String)
+        switch theme {
+        case .paper:
+            palette = ("#1c1c1f", "#6b6b70", "#fcfbf7", "#f0eee5", "#d1cfc7", "#6c5ce7")
+        case .sepia:
+            palette = ("#3d3120", "#70604a", "#f5eada", "#e6d8bf", "#c7b897", "#8a5a2b")
+        case .midnight:
+            palette = ("#dbdff0", "#94a0b8", "#1a1c26", "#292c3b", "#3d4257", "#a29bfe")
+        case .system:
+            palette = ("#1c1c1e", "#6c6c70", "#ffffff", "#f2f2f7", "#d1d1d6", "#6c5ce7")
+        }
+
+        let scheme = theme.isDark ? "dark" : "light"
+        let isDark = theme.isDark ? "1" : "0"
+        return """
+        :root {
+          color-scheme: \(scheme);
+          --text: \(palette.text);
+          --muted: \(palette.muted);
+          --background: \(palette.background);
+          --surface: \(palette.surface);
+          --border: \(palette.border);
+          --accent: \(palette.accent);
+          --is-dark: \(isDark);
+        }
+        """
+    }
+
+    /// Frontmatter as a readable card. The raw YAML is never emitted, matching the
+    /// in-app preview so exported documents do not leak `---` fences and key/value lines.
+    private static func renderProperties(_ frontmatter: MarkdownFrontmatter) -> String {
+        var rows = ""
+        for field in frontmatter.fields {
+            let value: String
+            switch field.kind {
+            case .tags:
+                value = field.listValues
+                    .map { "<span class=\"tag\">#\(escape($0))</span>" }
+                    .joined(separator: " ")
+            case .list:
+                value = escape(field.listValues.joined(separator: ", "))
+            case .empty:
+                value = "—"
+            default:
+                value = escape(field.value)
+            }
+            rows += "<dt>\(escape(field.displayKey))</dt><dd>\(value)</dd>\n"
+        }
+        return """
+        <aside class="properties">
+        <p class="properties-title">Properties</p>
+        <dl>
+        \(rows)</dl>
+        </aside>
+        """
     }
 
     // MARK: - Blocks
@@ -112,25 +257,43 @@ enum MarkdownHTMLExport {
             return "<\(tag)>\(renderInline(text, references: references))</\(tag)>"
 
         case .paragraph(let text):
+            if let latex = displayMath(text) {
+                return "<div class=\"math-block\">\(escape(LaTeXMathRenderer.render(latex)))</div>"
+            }
             return "<p>\(renderInline(text, references: references))</p>"
 
         case .blockQuote(let blocks):
             return "<blockquote>\n\(render(blocks: blocks, references: references))\n</blockquote>"
 
         case .codeBlock(let language, let lines):
+            let code = lines.joined(separator: "\n")
+            if language?.lowercased() == "mermaid",
+               let flowchart = MermaidParser.flowchart(code) {
+                return "<div class=\"mermaid\">\n\(MermaidParser.svg(flowchart))\n</div>"
+            }
             let classAttribute = language.map {
                 " class=\"language-\(escapeAttribute($0))\""
             } ?? ""
-            let code = escape(lines.joined(separator: "\n"))
-            return "<pre><code\(classAttribute)>\(code)</code></pre>"
+            let highlighted = CodeSyntaxHighlighter.htmlSpans(in: code, language: language)
+            return "<pre><code\(classAttribute)>\(highlighted)</code></pre>"
 
         case .list(let ordered, let start, let items):
             let tag = ordered ? "ol" : "ul"
             let startAttribute = ordered && start != 1 ? " start=\"\(start)\"" : ""
+            let containsTask = items.contains { taskInfo($0) != nil }
+            let listClass = containsTask ? " class=\"task-list\"" : ""
             let renderedItems = items.map { item -> String in
-                "<li>\n\(render(blocks: item.blocks, references: references))\n</li>"
+                if let task = taskInfo(item) {
+                    let nested = render(
+                        blocks: Array(item.blocks.dropFirst()),
+                        references: references
+                    )
+                    let checkbox = task.checked ? " checked" : ""
+                    return "<li class=\"task\"><input type=\"checkbox\"\(checkbox) disabled> \(renderInline(task.text, references: references))\(nested.isEmpty ? "" : "\n" + nested)</li>"
+                }
+                return "<li>\n\(render(blocks: item.blocks, references: references))\n</li>"
             }.joined(separator: "\n")
-            return "<\(tag)\(startAttribute)>\n\(renderedItems)\n</\(tag)>"
+            return "<\(tag)\(startAttribute)\(listClass)>\n\(renderedItems)\n</\(tag)>"
 
         case .table(let header, let alignments, let rows):
             return renderTable(header: header, alignments: alignments, rows: rows, references: references)
@@ -204,7 +367,7 @@ enum MarkdownHTMLExport {
     ) -> String {
         switch inline {
         case .text(let value):
-            return escape(value)
+            return renderText(value)
 
         case .emphasis(let children):
             return "<em>\(renderInline(children, references: references))</em>"
@@ -255,6 +418,72 @@ enum MarkdownHTMLExport {
     }
 
     // MARK: - Helpers
+
+    private struct ExportedTask {
+        let checked: Bool
+        let text: String
+    }
+
+    private static func displayMath(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("$$"), trimmed.hasSuffix("$$"), trimmed.count > 4 {
+            return String(trimmed.dropFirst(2).dropLast(2))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if trimmed.hasPrefix("\\["), trimmed.hasSuffix("\\]"), trimmed.count > 4 {
+            return String(trimmed.dropFirst(2).dropLast(2))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    private static func taskInfo(_ item: MarkdownListItem) -> ExportedTask? {
+        guard case .paragraph(let raw)? = item.blocks.first else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let regex = try? NSRegularExpression(
+            pattern: #"^\[([ xX])\][ \t]+(.+)$"#,
+            options: [.dotMatchesLineSeparators]
+        ),
+        let match = regex.firstMatch(
+            in: trimmed,
+            range: NSRange(location: 0, length: (trimmed as NSString).length)
+        ),
+        let markerRange = Range(match.range(at: 1), in: trimmed),
+        let textRange = Range(match.range(at: 2), in: trimmed) else {
+            return nil
+        }
+        return ExportedTask(
+            checked: String(trimmed[markerRange]).lowercased() == "x",
+            text: String(trimmed[textRange])
+        )
+    }
+
+    /// Escapes plain text while rendering inline `$…$` math as Unicode serif spans.
+    private static func renderText(_ value: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"(?<!\\)\$([^$\n]+)\$"#) else {
+            return escape(value)
+        }
+        let ns = value as NSString
+        let matches = regex.matches(in: value, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return escape(value) }
+
+        var output = ""
+        var cursor = 0
+        for match in matches {
+            if match.range.location > cursor {
+                output += escape(ns.substring(
+                    with: NSRange(location: cursor, length: match.range.location - cursor)
+                ))
+            }
+            let latex = ns.substring(with: match.range(at: 1))
+            output += "<span class=\"math-inline\">\(escape(LaTeXMathRenderer.render(latex)))</span>"
+            cursor = match.range.location + match.range.length
+        }
+        if cursor < ns.length {
+            output += escape(ns.substring(from: cursor))
+        }
+        return output
+    }
 
     /// Relative destinations and the schemes a browser can safely handle. Markdown can
     /// contain `javascript:` or `data:` links, which must not become active on export.

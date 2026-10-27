@@ -36,6 +36,17 @@
     <true/>
     <key>NSSupportsSuddenTermination</key>
     <true/>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.iriseditor.capture</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>iriseditor</string>
+            </array>
+        </dict>
+    </array>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
