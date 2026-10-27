@@ -16,3 +16,4 @@ __pycache__/
 
 # Built app bundle (regenerable; keep icon sources in dist/ instead)
 /dist/IrisEditor.app/
+/IrisEditor.xcodeproj/
