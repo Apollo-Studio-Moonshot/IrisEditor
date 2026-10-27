@@ -298,6 +298,13 @@ final class AppState: ObservableObject {
             guard confirmDiscardChanges(for: target) else { return }
         }
 
+        // Once the tab is gone the document is not coming back, so any crash-recovery
+        // draft behind it must go too. This covers tabs that were saved (which already
+        // clear their draft) as well as tabs closed without ever becoming dirty.
+        if target.fileURL == nil {
+            discardDraft(for: target)
+        }
+
         guard let removalIndex = tabs.firstIndex(where: { $0.id == target.id }) else { return }
         let closedURL = target.fileURL
 
@@ -750,10 +757,21 @@ final class AppState: ObservableObject {
             return saveChanges(for: target)
         case .alertSecondButtonReturn:
             target.isDirty = false
+            // "Don't Save" must actually discard the work: without this the
+            // crash-recovery draft survives and reappears on the next launch.
+            discardDraft(for: target)
             return true
         default:
             return false
         }
+    }
+
+    /// Deletes the crash-recovery draft backing an untitled document and detaches it, so
+    /// text the user discarded can never be resurrected by session restoration.
+    private func discardDraft(for target: EditorDocument) {
+        guard let draftID = target.draftID else { return }
+        DraftStore.delete(id: draftID)
+        target.draftID = nil
     }
 
     /// Prompts for every dirty tab in order (used before quitting); false on cancel.
@@ -1619,6 +1637,8 @@ final class AppState: ObservableObject {
             .store(in: &cancellables)
 
         // Crash recovery for untitled drafts: persist the buffer shortly after typing stops.
+        // Only dirty text counts as recoverable work; after a discard the document is clean
+        // and a late debounced write must not recreate the draft.
         textChanges
             .dropFirst()
             .debounce(for: .seconds(1.5), scheduler: RunLoop.main)
@@ -1626,6 +1646,7 @@ final class AppState: ObservableObject {
                 guard let self,
                       change.id == self.document.id,
                       self.document.fileURL == nil,
+                      self.document.isDirty,
                       !change.text.isEmpty else {
                     return
                 }

@@ -356,7 +356,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AppState.shared.saveSession()
-        DraftStore.prune(olderThan: 30)
+        // A clean quit means every dirty document was already saved or explicitly
+        // discarded, so no crash-recovery drafts should remain. Clearing them also
+        // removes drafts left behind by older builds that leaked discarded work.
+        DraftStore.clear()
         SpotlightIndexer.removeAll()
     }
 
