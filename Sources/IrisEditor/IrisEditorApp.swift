@@ -76,6 +76,16 @@ struct IrisEditorApp: App {
                 }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
                 .disabled(appState.tabs.count < 2)
+
+                Divider()
+
+                ForEach(1...9, id: \.self) { number in
+                    Button(number == 9 ? "Last Tab" : "Tab \(number)") {
+                        appState.selectTab(number: number)
+                    }
+                    .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)
+                    .disabled(appState.tabs.count < (number == 9 ? 2 : number))
+                }
             }
 
             CommandGroup(replacing: .printItem) {

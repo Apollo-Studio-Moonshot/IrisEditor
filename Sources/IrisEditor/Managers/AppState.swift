@@ -163,8 +163,16 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Closes a tab. Prompts to save when its document is dirty; closing the last tab
-    /// closes the window itself instead of trapping the user behind a rebuilt empty tab.
+    /// Selects a tab by its 1-based position for `⌘1`…`⌘9`. `9` selects the last tab,
+    /// matching Safari, Finder, and most browsers.
+    func selectTab(number: Int) {
+        guard (1...9).contains(number), !tabs.isEmpty else { return }
+        selectTab(at: number == 9 ? tabs.count - 1 : number - 1)
+    }
+
+    /// Closes a tab. Prompts to save or discard when its document is dirty; closing the
+    /// last tab closes the window itself instead of trapping the user behind a rebuilt
+    /// empty tab.
     ///
     /// Closing a background tab keeps the current document in front instead of jumping
     /// to a neighbor, matching native tab behavior.
@@ -175,7 +183,7 @@ final class AppState: ObservableObject {
         let wasActive = target.id == activeDocument.id
 
         if target.isDirty {
-            guard saveTabChanges(for: target) else { return }
+            guard confirmDiscardChanges(for: target) else { return }
         }
 
         guard let removalIndex = tabs.firstIndex(where: { $0.id == target.id }) else { return }
@@ -217,33 +225,6 @@ final class AppState: ObservableObject {
                 document = tabs[next]
             }
         }
-    }
-
-    /// Saves dirty changes for a specific tab (used before closing), temporarily
-    /// switching the active document so panel-driven saves target the right one.
-    private func saveTabChanges(for target: EditorDocument) -> Bool {
-        guard let targetIndex = tabs.firstIndex(where: { $0.id == target.id }) else { return true }
-        let previousIndex = currentTabIndex
-
-        if document.id != target.id {
-            currentTabIndex = targetIndex
-            document = target
-        }
-
-        let saved: Bool
-        if let url = target.fileURL {
-            saved = save(to: url)
-        } else {
-            saved = saveDocumentAs()
-        }
-
-        // Restore the originally active tab when the save was cancelled, so closing
-        // a background tab never leaves the user staring at the wrong document.
-        if !saved, tabs.indices.contains(previousIndex), document.id != tabs[previousIndex].id {
-            currentTabIndex = previousIndex
-            document = tabs[previousIndex]
-        }
-        return saved
     }
 
     func openDocument() {
@@ -414,21 +395,33 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func saveDocument() -> Bool {
-        guard let url = document.fileURL else {
-            return saveDocumentAs()
-        }
-        return save(to: url)
+        saveChanges(for: document)
     }
 
     @discardableResult
     func saveDocumentAs() -> Bool {
+        saveDocumentAs(for: document)
+    }
+
+    /// Saves a specific document, asking for a location when it has no file URL yet.
+    /// Targeting the document directly keeps background-tab saves from stealing focus.
+    @discardableResult
+    private func saveChanges(for target: EditorDocument) -> Bool {
+        guard let url = target.fileURL else {
+            return saveDocumentAs(for: target)
+        }
+        return save(target, to: url)
+    }
+
+    @discardableResult
+    private func saveDocumentAs(for target: EditorDocument) -> Bool {
         let panel = NSSavePanel()
         panel.allowedContentTypes = MarkdownFileType.editable
-        panel.nameFieldStringValue = document.displayName
+        panel.nameFieldStringValue = target.displayName
         panel.canCreateDirectories = true
 
         guard panel.runModal() == .OK, let url = panel.url else { return false }
-        return save(to: url)
+        return save(target, to: url)
     }
 
     /// Exports the current document as a self-contained HTML file. The Markdown source
@@ -454,6 +447,11 @@ final class AppState: ObservableObject {
 
     @discardableResult
     private func save(to url: URL) -> Bool {
+        save(document, to: url)
+    }
+
+    @discardableResult
+    private func save(_ target: EditorDocument, to url: URL) -> Bool {
         // If the user chose a Markdown panel without an extension, default to `.md`.
         let resolved: URL
         if url.pathExtension.isEmpty, let withExtension = url.appendingPathExtension(MarkdownFileType.defaultExtension) as URL? {
@@ -463,9 +461,9 @@ final class AppState: ObservableObject {
         }
 
         do {
-            try document.text.write(to: resolved, atomically: true, encoding: .utf8)
-            document.fileURL = resolved
-            document.isDirty = false
+            try target.text.write(to: resolved, atomically: true, encoding: .utf8)
+            target.fileURL = resolved
+            target.isDirty = false
             recordRecent(resolved)
             return true
         } catch {
@@ -488,11 +486,17 @@ final class AppState: ObservableObject {
 
     /// Offers to save unsaved changes before a destructive action (new, open, quit).
     func confirmDiscardChanges() -> Bool {
-        guard document.isDirty else { return true }
+        confirmDiscardChanges(for: document)
+    }
+
+    /// Offers to save, discard, or cancel the unsaved changes of a specific document.
+    /// Returns `false` only when the user cancels.
+    func confirmDiscardChanges(for target: EditorDocument) -> Bool {
+        guard target.isDirty else { return true }
 
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Do you want to save the changes made to “\(document.displayName)”?"
+        alert.messageText = "Do you want to save the changes made to “\(target.displayName)”?"
         alert.informativeText = "Your changes will be lost if you don’t save them."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Don’t Save")
@@ -500,10 +504,9 @@ final class AppState: ObservableObject {
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            _ = saveDocument()
-            return !document.isDirty
+            return saveChanges(for: target)
         case .alertSecondButtonReturn:
-            document.isDirty = false
+            target.isDirty = false
             return true
         default:
             return false
@@ -512,23 +515,8 @@ final class AppState: ObservableObject {
 
     /// Prompts for every dirty tab in order (used before quitting); false on cancel.
     func confirmDiscardAllTabs() -> Bool {
-        let previousIndex = currentTabIndex
-        for (index, tab) in tabs.enumerated() where tab.isDirty {
-            if document.id != tab.id {
-                currentTabIndex = index
-                document = tab
-            }
-            guard confirmDiscardChanges() else {
-                if tabs.indices.contains(previousIndex) {
-                    currentTabIndex = previousIndex
-                    document = tabs[previousIndex]
-                }
-                return false
-            }
-        }
-        if tabs.indices.contains(previousIndex), document.id != tabs[previousIndex].id {
-            currentTabIndex = previousIndex
-            document = tabs[previousIndex]
+        for tab in tabs where tab.isDirty {
+            guard confirmDiscardChanges(for: tab) else { return false }
         }
         return true
     }
