@@ -19,6 +19,7 @@ enum KeybindingCommand: String, CaseIterable, Identifiable {
     case versionHistory
     case pasteAsMarkdown
     case exportHTML
+    case exportPDF
     case findReplace
     case goToLine
     case zoomIn
@@ -52,6 +53,7 @@ enum KeybindingCommand: String, CaseIterable, Identifiable {
         case .versionHistory: return "Version History…"
         case .pasteAsMarkdown: return "Paste as Markdown"
         case .exportHTML: return "Export as HTML…"
+        case .exportPDF: return "Export as PDF…"
         case .findReplace: return "Find & Replace…"
         case .goToLine: return "Go to Line…"
         case .zoomIn: return "Zoom In"
@@ -78,7 +80,7 @@ enum KeybindingCommand: String, CaseIterable, Identifiable {
         case .reopenClosedTab: return "command+shift+t"
         case .nextTab: return "command+shift+]"
         case .previousTab: return "command+shift+["
-        case .printDocument: return "command+p"
+        case .printDocument: return "command+option+shift+p"
         case .quickSwitcher: return "command+p"
         case .commandPalette: return "command+shift+p"
         case .toggleOutline: return "command+shift+o"
@@ -86,6 +88,7 @@ enum KeybindingCommand: String, CaseIterable, Identifiable {
         case .versionHistory: return "command+shift+h"
         case .pasteAsMarkdown: return "command+option+v"
         case .exportHTML: return "command+shift+e"
+        case .exportPDF: return "command+option+e"
         case .findReplace: return "command+f"
         case .goToLine: return "command+g"
         case .zoomIn: return "command+="

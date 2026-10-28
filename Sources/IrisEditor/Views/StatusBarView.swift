@@ -16,6 +16,21 @@ struct StatusBarView: View {
 
             Spacer(minLength: 12)
 
+            if let editorMode = appState.editorModeLabel {
+                Text(editorMode)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(appState.settings.accentColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background {
+                        GlassBackdrop(style: .regular, cornerRadius: 6, interactive: true)
+                    }
+                    .accessibilityLabel(editorMode)
+                    .accessibilityIdentifier("Status.EditorMode")
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                separator
+            }
+
             if appState.document.isDirty {
                 item(L10n.edited)
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
@@ -27,6 +42,7 @@ struct StatusBarView: View {
             item(L10n.utf8)
         }
         .animation(.snappy(duration: 0.18), value: appState.document.isDirty)
+        .animation(.snappy(duration: 0.18), value: appState.editorModeLabel)
         .font(.system(size: 11))
         .monospacedDigit()
         .foregroundStyle(.secondary)

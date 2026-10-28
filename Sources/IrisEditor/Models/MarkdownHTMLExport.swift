@@ -115,6 +115,22 @@ enum MarkdownHTMLExport {
           color: var(--accent);
           font-size: 0.82em;
         }
+        @page { size: auto; margin: 18mm 16mm; }
+        @media print {
+          :root { color-scheme: light; }
+          body {
+            padding: 0;
+            background: #fff;
+            color: #111;
+            font-size: 11.5pt;
+          }
+          main { max-width: none; }
+          h1, h2, h3, h4, h5, h6 { break-after: avoid; }
+          pre, table, blockquote, .properties, .mermaid { break-inside: avoid; }
+          a { color: #1c1c1e; text-decoration: underline; }
+          code, pre, th { background: #f4f4f5; }
+          .tag { background: #f0f0f2; color: #333; }
+        }
         </style>
         </head>
         <body>

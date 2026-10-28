@@ -65,7 +65,8 @@ struct ContentView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .tint(appState.settings.accent.color)
+        .tint(appState.settings.accentColor)
+        .preferredColorScheme(appState.settings.appearance.colorScheme)
         .background(
             WindowConfigurator(
                 displayName: appState.document.displayName,
@@ -338,7 +339,10 @@ struct ContentView: View {
         .clipShape(.rect(cornerRadius: 14))
         .overlay {
             RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.7), lineWidth: 0.5)
+                .strokeBorder(
+                    Color(nsColor: .separatorColor).opacity(appState.settings.isHighContrast ? 1 : 0.7),
+                    lineWidth: appState.settings.isHighContrast ? 1.5 : 0.5
+                )
         }
         .padding(.horizontal, appState.isZenMode ? 64 : 12)
         .padding(.top, appState.isZenMode ? 28 : 10)

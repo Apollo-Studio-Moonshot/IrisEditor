@@ -62,6 +62,7 @@ enum L10n {
     static let saveMenu = NSLocalizedString("Save", comment: "Menu item to save the document")
     static let saveAsMenu = NSLocalizedString("Save As…", comment: "Menu item to save the document under a new name")
     static let exportHTML = NSLocalizedString("Export as HTML…", comment: "Menu item exporting HTML")
+    static let pluginsMenu = NSLocalizedString("Plugins", comment: "Menu containing plugin commands and management items")
     static let exportPDF = NSLocalizedString("Export as PDF…", comment: "Menu item exporting PDF")
     static let exportRTF = NSLocalizedString("Export as RTF…", comment: "Menu item exporting RTF")
     static let findReplace = NSLocalizedString("Find & Replace…", comment: "Menu item opening find and replace")
@@ -101,6 +102,16 @@ enum L10n {
     static let notSelected = NSLocalizedString("Not selected", comment: "Accessibility value for an inactive tab")
     static let selected = NSLocalizedString("Selected", comment: "Accessibility value for the active tab")
 
+    // MARK: - Settings tabs
+
+    static let settingsEditorTab = NSLocalizedString("Editor", comment: "Settings tab for font, indentation, and display options")
+    static let settingsAppearanceTab = NSLocalizedString("Appearance", comment: "Settings tab for themes and accent color")
+    static let settingsWritingTab = NSLocalizedString("Writing", comment: "Settings tab for writing modes and keymap")
+    static let settingsAITab = NSLocalizedString("AI", comment: "Settings tab for the writing assistant provider")
+    static let settingsKeysTab = NSLocalizedString("Keys", comment: "Settings tab for keyboard shortcuts")
+    static let settingsPluginsTab = NSLocalizedString("Plugins", comment: "Settings tab for installed plugins")
+    static let settingsAdvancedTab = NSLocalizedString("Advanced", comment: "Settings tab for vault and accessibility options")
+
     // MARK: - Settings
 
     static let editorFont = NSLocalizedString("Editor Font", comment: "Settings section title for font options")
@@ -113,6 +124,11 @@ enum L10n {
     static let appearance = NSLocalizedString("Appearance", comment: "Settings section title for colors")
     static let accent = NSLocalizedString("Accent", comment: "Settings label for the accent color")
     static let previewTheme = NSLocalizedString("Preview Theme", comment: "Settings label for the preview color theme")
+    static let appTheme = NSLocalizedString("Theme", comment: "Settings label for the window appearance")
+    static let customAccentColor = NSLocalizedString("Custom Accent Color", comment: "Settings label for the custom accent color picker")
+    static let highContrastNote = NSLocalizedString("High Contrast pins a dark palette with stronger borders for bright rooms and projectors.", comment: "Explanation of the high contrast appearance option")
+    static let editingMode = NSLocalizedString("Editing Mode", comment: "Settings label for the Standard, Vim, or Emacs keymap")
+    static let editingModeNote = NSLocalizedString("Vim uses Normal, Insert, Visual, and : command modes. Emacs adds Control and Option navigation, kill, and yank.", comment: "Explanation of the editing mode setting")
     static let writing = NSLocalizedString("Writing", comment: "Settings section title for writing modes")
     static let typewriterScrolling = NSLocalizedString("Typewriter Scrolling", comment: "Settings toggle for typewriter mode")
     static let focusMode = NSLocalizedString("Focus Mode (dim other paragraphs)", comment: "Settings toggle for focus mode")
@@ -136,6 +152,15 @@ enum L10n {
     static let resetKeybinding = NSLocalizedString("Reset", comment: "Button resetting one keybinding to its default")
     static let resetAllKeybindings = NSLocalizedString("Reset All Keybindings", comment: "Button resetting every keybinding")
     static let invalidKeybinding = NSLocalizedString("Use a key with a command or control modifier.", comment: "Validation message for an invalid keybinding")
+    static let pluginsSection = NSLocalizedString("Installed Plugins", comment: "Settings section title listing plugins")
+    static let noPlugins = NSLocalizedString("No plugins installed. Add a folder with plugin.json and main.js to the Plugins folder, or install the sample plugin.", comment: "Empty state for the plugin list")
+    static let reloadPlugins = NSLocalizedString("Reload Plugins", comment: "Button rescanning the plugin folder")
+    static let openPluginsFolder = NSLocalizedString("Open Plugins Folder", comment: "Button revealing the plugins folder in Finder")
+    static let installSamplePlugin = NSLocalizedString("Install Sample Plugin", comment: "Button writing the example plugin")
+    static let pluginErrors = NSLocalizedString("Plugin Errors", comment: "Settings section title listing plugin load errors")
+    static let pluginDisabled = NSLocalizedString("Disabled", comment: "Label for a disabled plugin")
+    static let pluginCommands = NSLocalizedString("commands", comment: "Plugin summary noun for commands")
+    static let pluginExporters = NSLocalizedString("exporters", comment: "Plugin summary noun for exporters")
     static let accessibilitySection = NSLocalizedString("Accessibility", comment: "Settings section title for the accessibility audit")
     static let accessibilityAuditSummary = NSLocalizedString("VoiceOver labels and stable identifiers are present across the writing surfaces below.", comment: "Explanation of the accessibility audit list")
     static let sidebarAudit = NSLocalizedString("Sidebar panes and note rows", comment: "Accessibility audit row")

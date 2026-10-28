@@ -29,8 +29,14 @@ Electron, no dependencies, and no project bloat.
 - **Smart Markdown continuation** — Return continues bulleted, ordered, task, and quoted
   lines with the right marker (incrementing ordered numbers), and Return on an empty item
   exits the list instead of leaving a stray marker
-- **HTML export** — File ▸ Export as HTML… (`⇧⌘E`) writes a standalone, appearance-aware
-  HTML file using the same parser as the in-app preview
+- **Export and print** — File ▸ Export as HTML… (`⇧⌘E`), Export as PDF… (`⌥⌘E`),
+  and Export as RTF… write appearance-aware output using the same parser as the preview;
+  File ▸ Print… (`⌥⇧⌘P`) sends paginated, print-styled output through the native print panel
+- **Themes** — System / Light / Dark / High Contrast window appearance, eight built-in
+  accents plus a custom color picker, and System / Paper / Sepia / Midnight preview themes
+- **Vim and Emacs keymaps** — opt into modal Normal / Insert / Visual / `:` editing with
+  counts, motions, `dd`/`cc`/`yy`, paste, undo, and `:w` / `:q` / `:wq`, or classic
+  Emacs Control/Option navigation, kill, and yank
 - **Animated tab strip** — tabs scale and fade in/out as they open and close, the active
   Liquid Glass pill slides between tabs, and the strip auto-scrolls to keep the active tab
   visible
@@ -58,14 +64,19 @@ Electron, no dependencies, and no project bloat.
 - Dirty-state indicator in the title bar and status bar
 - Configurable settings: font family, font size, tab width, line numbers, word wrap,
   current-line highlight — persisted to `UserDefaults`
-- Native `Settings` scene (⌘,), File / Edit / View / Navigate / Model / Format menus, and the standard About panel
+- **Plugin API** — drop a JavaScript folder or `.js` file into
+  `~/Library/Application Support/IrisEditor/Plugins` to add commands, exporters, and
+  theme-switching commands; see [`docs/plugins.md`](docs/plugins.md)
+- Native `Settings` scene (⌘,) split into Editor, Appearance, Writing, AI, Keys, Plugins,
+  and Advanced tabs, plus File / Edit / View / Navigate / Plugins / Model / Format menus
+  and the standard About panel
 
 ## Requirements
 
 | | |
 |---|---|
-| OS | macOS 26 or later; macOS 27 “Golden Gate” supported and build-verified against the macOS 27 SDK |
-| Toolchain | Swift 6.3+ (Xcode 26 *or* Command Line Tools) |
+| OS | macOS 27 “Golden Gate” or later, built against the macOS 27 SDK |
+| Toolchain | Swift 6.4+ (Xcode 27 *or* Command Line Tools) |
 
 No third-party packages, no Package.swift dependencies.
 
@@ -129,6 +140,8 @@ xcodebuild -project IrisEditor.xcodeproj -scheme IrisEditor -derivedDataPath .bu
 | `⌘S` | Save |
 | `⇧⌘S` | Save As… |
 | `⇧⌘E` | Export as HTML… |
+| `⌥⌘E` | Export as PDF… |
+| `⌥⇧⌘P` | Print… |
 | `⌘W` | Close Tab (closes the window on the last tab) |
 | `⇧⌘T` | Reopen Closed Tab |
 | `⇧⌘[` / `⇧⌘]` | Previous / Next Tab |
@@ -145,11 +158,16 @@ xcodebuild -project IrisEditor.xcodeproj -scheme IrisEditor -derivedDataPath .bu
 | `⌥⌘P` | Cycle Source / Split / Preview |
 | `Return` | Continue the current list/quote item |
 
+Vim mode adds its own modal bindings (`h j k l w b e 0 $ gg G`, `i a I A o O`,
+`x dd cc yy d/c/y + motion`, `p P u Ctrl-R`, `v V`, and `:w` / `:q` / `:wq`). Emacs mode
+adds `C-a`, `C-e`, `C-f`, `C-b`, `C-n`, `C-p`, `C-d`, `C-k`, `C-y`, `C-w`, `C-s`, and
+`M-f` / `M-b` / `M-d`.
+
 ## Project Structure
 
 ```
 IrisEditor/
-├── Package.swift                     # SwiftPM manifest (macOS 26, Swift 6 language mode)
+├── Package.swift                     # SwiftPM manifest (macOS 27, Swift 6 language mode)
 ├── IrisEditor.xcodeproj/             # Xcode app + unit-test targets, shared scheme
 ├── Support/
 │   ├── Info.plist                    # Bundle metadata, Markdown document types
@@ -160,7 +178,8 @@ IrisEditor/
 │   │   └── AppState.swift            # ObservableObject: document ops, find/replace, settings, Markdown formats
 │   ├── Models/
 │   │   ├── EditorDocument.swift      # Text, file URL, dirty flag, Markdown-aware stats
-│   │   ├── EditorSettings.swift      # Codable settings + UserDefaults persistence
+│   │   ├── EditorSettings.swift      # Codable settings, appearance, themes, keymap + persistence
+│   │   ├── VimEngine.swift           # Pure modal-editing state machine (unit tested)
 │   │   ├── FuzzyMatch.swift          # Fuzzy scoring for the quick switcher / palette
 │   │   ├── MarkdownBlocks.swift      # Recursive block parser for the preview
 │   │   ├── MarkdownEditing.swift     # List/quote continuation logic for Return
@@ -169,8 +188,12 @@ IrisEditor/
 │   │   ├── MarkdownOutline.swift     # ATX/Setext heading extraction for the outline
 │   │   ├── MarkdownFormatting.swift  # Grapheme-safe wrap/unwrap + line-prefix formatting
 │   │   ├── MarkdownSupport.swift     # Markdown file types, plain-text stripping, highlighter
-│   │   ├── RecentFiles.swift         # Persisted recent-file history
+│   │   ├── RecentFiles.swift          # Persisted recent-file history
 │   │   └── TextSearch.swift          # Pure search + line-index helpers (unit tested)
+│   ├── Services/
+│   │   ├── PluginHost.swift          # JavaScriptCore plugin discovery, commands, exporters
+│   │   ├── MarkdownPDFExporter.swift # Offscreen WKWebView PDF generation and printing
+│   │   └── MarkdownRTFExporter.swift # HTML → RTF export bridge
 │   └── Views/
 │       ├── ContentView.swift         # Root layout, editor card, overlays, native toolbar
 │       ├── TabBarView.swift          # Animated document tabs with glass active pill
@@ -182,11 +205,14 @@ IrisEditor/
 │       ├── MarkdownPreviewView.swift # Read-only rendered Markdown preview
 │       ├── FindReplacePanel.swift    # Glass find/replace and go-to-line bar
 │       ├── StatusBarView.swift       # Cursor / counts / size readout
-│       └── SettingsView.swift        # Native grouped Settings form
+│       └── SettingsView.swift        # Tabbed Settings: Editor, Appearance, Writing, AI, Keys, Plugins, Advanced
 ├── Tests/IrisEditorTests/
 │   ├── EditingAndExportTests.swift   # Continuation, statistics, offsets, HTML export
+│   ├── EditorModesTests.swift        # Vim motions, edits, and theme/settings decoding
 │   ├── IrisEditorTests.swift         # Markdown, search, and formatting tests
 │   └── WorkspaceTests.swift          # Fuzzy matching, outline, wiki links, recents
+├── docs/
+│   └── plugins.md                   # Plugin manifest, command, exporter, and theme API
 └── scripts/
     └── build_app_bundle.sh           # Wrap the release binary in a signed .app
 ```
@@ -201,8 +227,9 @@ IrisEditor/
   represented URL, edited state, a unified native toolbar, and a non-opaque window backed by
   `NSVisualEffectView` (`.underWindowBackground`, behind-window blending).
 - **Glass is real Liquid Glass.** `GlassBackdrop` wraps `NSGlassEffectView`; on macOS 27 it
-  enables `effectIsInteractive` under an availability check while the deployment target stays
-  at macOS 26, so the same binary runs on macOS 26 and Golden Gate.
+  enables `effectIsInteractive` under an availability check while the deployment target
+  remains macOS 27, so the status bar mode badge, tab pill, panels, and editor card all use
+  pointer-responsive Golden Gate glass.
 - **Tabs animate as documents come and go.** Insertion/removal transitions live on each tab
   item, the active glass pill uses `matchedGeometryEffect`, and the strip scrolls the active
   tab into view. Tab mutations are wrapped in `withAnimation` in `AppState`.
@@ -235,23 +262,33 @@ IrisEditor/
 - **Smart Return** is centralized in `MarkdownEditing`, a pure helper that detects bullet,
   ordered, task-list, and nested block-quote markers. `IrisTextView.insertNewline` applies
   the decision; an empty item removes its marker and exits the container.
-- **HTML export** reuses the preview's block and inline parsers through
+- **HTML, PDF, and RTF export** reuse the preview's block and inline parsers through
   `MarkdownHTMLExport`, escaping text and raw HTML so exported files are safe to open in a
-  browser and look consistent with the in-app preview.
+  browser and look consistent with the in-app preview. PDF and print jobs render that same
+  HTML in an offscreen `WKWebView` (`MarkdownPDFExporter`), and the export stylesheet pins
+  light, page-broken `@media print` rules.
+- **Editing modes are pure where it counts.** `VimEngine` owns no AppKit state: it receives
+  text and a selection and returns the next text, selection, and mode, so movements and
+  operators are unit tested. `IrisTextView` applies the returned edit through
+  `insertText(_:replacementRange:)` to keep Undo intact. Emacs bindings map Control/Option
+  chords onto native `NSTextView` selectors with a small kill ring.
+- **Plugins run in JavaScriptCore.** `PluginHost` scans the Application Support plugin
+  folder, evaluates each plugin with only the `iris` registration API exposed, and bridges
+  command contexts to `AppState`. Commands are namespaced by plugin id, appear in the
+  Plugins menu and command palette, and can apply undoable edits, switch themes, or expose
+  an HTML exporter. No filesystem or network APIs are exposed to scripts.
 
 ## Status
 
-Iris Editor is an early work-in-progress. Markdown editing, syntax highlighting, preview,
-formatting, smart list continuation, HTML export, find/replace, go-to-line, settings,
-animated tabs, the quick switcher, command palette, outline sidebar, wiki links, recent
-files, and the status bar are functional.
+Iris Editor is a focused native Markdown editor. Editing, syntax highlighting, preview,
+formatting, smart list continuation, HTML/PDF/RTF export, printing, find/replace,
+go-to-line, tabbed Settings, animated tabs, the quick switcher, command palette, outline
+sidebar, wiki links, recent files, themes, Vim/Emacs keymaps, the JavaScript plugin API,
+and the status bar are functional.
 
-**Not yet implemented:** GPT-2 autocomplete. The original Python prototype used
-`transformers`/`torch`; running it in Swift would require converting the model to Core ML.
-The *Load GPT-2 Model…* menu item surfaces an explanatory alert; *Trigger Autocomplete*
-remains disabled until the model ships. See
-[`docs/legacy-readme-pyqt5.md`](docs/legacy-readme-pyqt5.md) for the archived Python/PyQt5
-prototype notes.
+Autocomplete is handled by the writing assistant instead of a bundled language model:
+Apple Intelligence (Foundation Models) on-device, or a remote provider configured in
+Settings ▸ AI. There is no separate local-model download or conversion step.
 
 ## License
 

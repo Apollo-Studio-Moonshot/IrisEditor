@@ -43,6 +43,12 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "Export as HTML…", icon: "safari", shortcut: "⇧⌘E") {
                 appState.exportHTML()
             },
+            PaletteCommand(title: "Export as PDF…", icon: "doc.richtext", shortcut: "⌥⌘E") {
+                appState.exportPDF()
+            },
+            PaletteCommand(title: "Print…", icon: "printer", shortcut: "⌥⇧⌘P") {
+                appState.printDocument()
+            },
             PaletteCommand(title: "Find & Replace", icon: "magnifyingglass", shortcut: "⌘F") {
                 appState.showFindReplace = true
             },
@@ -97,7 +103,15 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "Settings…", icon: "gearshape", shortcut: "⌘,") {
                 openSettings()
             },
-        ]
+        ] + appState.pluginCommands.map { command in
+            PaletteCommand(
+                title: command.title,
+                icon: "puzzlepiece.extension",
+                shortcut: command.shortcut.map(KeybindingParser.displayName)
+            ) {
+                appState.runPluginCommand(command)
+            }
+        }
     }
 
     private var filteredCommands: [PaletteCommand] {

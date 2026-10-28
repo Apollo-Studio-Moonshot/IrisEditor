@@ -213,6 +213,11 @@ final class IrisTextView: NSTextView {
     private var ghostAnchor: Int?
     private var aiTask: Task<Void, Never>?
 
+    // Modal and Emacs editing
+    private var vimEngine = VimEngine()
+    private var emacsKillRing = ""
+    private var emacsMark: Int?
+
     @MainActor private static let imageExtensions: Set<String> = [
         "png", "jpg", "jpeg", "gif", "heic", "heif", "tiff", "webp", "bmp"
     ]
@@ -350,6 +355,12 @@ final class IrisTextView: NSTextView {
             name: .pasteAsMarkdown,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleResetEditorMode(_:)),
+            name: .resetEditorMode,
+            object: nil
+        )
 
         registerForDraggedTypes([
             .fileURL,
@@ -363,6 +374,8 @@ final class IrisTextView: NSTextView {
         super.viewDidMoveToWindow()
         if let window {
             window.makeFirstResponder(self)
+            AppState.shared.currentTextView = self
+            postEditorMode()
         }
     }
 
@@ -376,8 +389,13 @@ final class IrisTextView: NSTextView {
         let tabChanged = previous == nil || previous?.tabWidth != newSettings.tabWidth
         let highlightChanged = previous?.highlightCurrentLine != newSettings.highlightCurrentLine
         let focusChanged = previous?.focusMode != newSettings.focusMode
+        let editingModeChanged = previous?.editingMode != newSettings.editingMode
 
         settings = newSettings
+        if editingModeChanged {
+            vimEngine.reset()
+            postEditorMode()
+        }
 
         if fontChanged || tabChanged {
             font = newSettings.font
@@ -543,6 +561,7 @@ final class IrisTextView: NSTextView {
     override func didChangeText() {
         super.didChangeText()
         cachedLineIndex = nil
+        AppState.shared.currentTextView = self
         enclosingScrollView?.verticalRulerView?.needsDisplay = true
         if !isApplyingExternalText {
             postCursorPosition()
@@ -571,7 +590,8 @@ final class IrisTextView: NSTextView {
 
     private func postCursorPosition() {
         let textLength = (string as NSString).length
-        let location = min(selectedRange().location, textLength)
+        let selection = selectedRange()
+        let location = min(selection.location, textLength)
         let lineIndex = lineIndexSnapshot()
         let line = lineIndex.lineNumber(atUTF16Index: location)
         let start = lineIndex.lineStart(forLine: line) ?? 0
@@ -580,11 +600,17 @@ final class IrisTextView: NSTextView {
         NotificationCenter.default.post(
             name: .cursorDidChange,
             object: self,
-            userInfo: ["line": line, "column": column]
+            userInfo: [
+                "line": line,
+                "column": column,
+                "selectionLocation": selection.location,
+                "selectionLength": selection.length
+            ]
         )
     }
 
     @objc private func handleSelectionChange(_ notification: Notification) {
+        AppState.shared.currentTextView = self
         needsDisplay = true
         enclosingScrollView?.verticalRulerView?.needsDisplay = true
         postCursorPosition()
@@ -921,6 +947,11 @@ final class IrisTextView: NSTextView {
     // MARK: - Wiki autocomplete
 
     private func updateWikiAutocompleteTrigger() {
+        if settings.editingMode == .vim, vimEngine.mode != .insert {
+            wikiTriggerLocation = nil
+            NotificationCenter.default.post(name: .wikiAutocompleteRequest, object: self)
+            return
+        }
         guard settings.wikiAutocomplete else {
             wikiTriggerLocation = nil
             NotificationCenter.default.post(name: .wikiAutocompleteRequest, object: self)
@@ -996,6 +1027,7 @@ final class IrisTextView: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         let keyCode = event.keyCode
+        AppState.shared.currentTextView = self
 
         if AppState.shared.showWikiSuggestions {
             switch keyCode {
@@ -1040,7 +1072,235 @@ final class IrisTextView: NSTextView {
             }
         }
 
+        if settings.editingMode == .vim, handleVimKey(event) {
+            return
+        }
+
+        if settings.editingMode == .emacs, handleEmacsKey(event) {
+            return
+        }
+
         super.keyDown(with: event)
+    }
+
+    // MARK: - Vim mode
+
+    private func handleVimKey(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        if vimEngine.mode == .insert {
+            guard event.keyCode == 53 else { return false }
+            let result = vimEngine.exitInsertMode(text: string, selection: selectedRange())
+            applyVimResult(result)
+            return true
+        }
+
+        // Leave menu shortcuts (⌘…), normal Option input, and non-redo Control chords
+        // to AppKit. Control-R is the one Control key Vim owns in Normal mode.
+        if flags.contains(.command) { return false }
+        if flags.contains(.option) { return false }
+        if flags.contains(.control), !(event.keyCode == 15 && !flags.contains(.shift)) {
+            return false
+        }
+
+        let key: VimKey
+        switch event.keyCode {
+        case 53: key = .escape
+        case 36, 76: key = .returnKey
+        case 51: key = .backspace
+        case 15 where flags.contains(.control): key = .controlR
+        default:
+            guard let character = event.charactersIgnoringModifiers?.first else { return false }
+            key = .character(character)
+        }
+
+        let result = vimEngine.handle(
+            key: key,
+            text: string,
+            selection: selectedRange()
+        )
+        applyVimResult(result)
+        return result.handled
+    }
+
+    private func applyVimResult(_ result: VimResult) {
+        if result.text != string, let edit = Self.difference(from: string, to: result.text) {
+            insertText(edit.replacement, replacementRange: edit.range)
+        }
+
+        let ns = string as NSString
+        let location = min(max(0, result.selection.location), ns.length)
+        let length = min(max(0, result.selection.length), ns.length - location)
+        let selection = NSRange(location: location, length: length)
+        setSelectedRange(selection)
+        if selection.length == 0 {
+            scrollRangeToVisible(selection)
+        } else {
+            scrollRangeToVisible(NSRange(location: selection.location, length: 0))
+        }
+
+        switch result.command {
+        case .none:
+            break
+        case .save:
+            _ = AppState.shared.saveDocument()
+        case .closeTab:
+            AppState.shared.closeTab(at: AppState.shared.currentTabIndex)
+        case .saveAndClose:
+            if AppState.shared.saveDocument() {
+                AppState.shared.closeTab(at: AppState.shared.currentTabIndex)
+            }
+        case .undo:
+            undoManager?.undo()
+        case .redo:
+            undoManager?.redo()
+        case .openFind:
+            AppState.shared.showFindReplace = true
+        }
+
+        postEditorMode()
+    }
+
+    private func postEditorMode() {
+        let label: String
+        switch settings.editingMode {
+        case .vim:
+            label = "VIM · \(vimEngine.statusText)"
+        case .emacs:
+            label = "EMACS"
+        case .standard:
+            label = ""
+        }
+        NotificationCenter.default.post(
+            name: .editorModeDidChange,
+            object: self,
+            userInfo: ["label": label]
+        )
+    }
+
+    @objc private func handleResetEditorMode(_ notification: Notification) {
+        vimEngine.reset()
+        postEditorMode()
+    }
+
+    /// Finds the smallest replacement that turns `old` into `new` so modal edits can
+    /// flow through `insertText(_:replacementRange:)` and remain undoable.
+    private static func difference(
+        from old: String,
+        to new: String
+    ) -> (range: NSRange, replacement: String)? {
+        let oldText = old as NSString
+        let newText = new as NSString
+        let shared = min(oldText.length, newText.length)
+
+        var prefix = 0
+        while prefix < shared, oldText.character(at: prefix) == newText.character(at: prefix) {
+            prefix += 1
+        }
+
+        var suffix = 0
+        while suffix < shared - prefix,
+              oldText.character(at: oldText.length - 1 - suffix) == newText.character(at: newText.length - 1 - suffix) {
+            suffix += 1
+        }
+
+        let oldRange = NSRange(location: prefix, length: oldText.length - prefix - suffix)
+        let newRange = NSRange(location: prefix, length: newText.length - prefix - suffix)
+        if oldRange.length == 0, newRange.length == 0 { return nil }
+        return (oldRange, newText.substring(with: newRange))
+    }
+
+    // MARK: - Emacs mode
+
+    private func handleEmacsKey(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard !flags.contains(.command) else { return false }
+
+        if flags.contains(.option) {
+            switch event.keyCode {
+            case 3: moveWordForward(nil)           // M-f
+            case 11: moveWordBackward(nil)         // M-b
+            case 2: deleteWordForward(nil)         // M-d
+            case 51: deleteWordBackward(nil)       // M-Delete
+            default: return false
+            }
+            return true
+        }
+
+        guard flags.contains(.control) else { return false }
+
+        switch event.keyCode {
+        case 0: moveToBeginningOfLine(nil)          // C-a
+        case 14: moveToEndOfLine(nil)               // C-e
+        case 3: moveForward(nil)                    // C-f
+        case 11: moveBackward(nil)                  // C-b
+        case 45: moveDown(nil)                      // C-n
+        case 35: moveUp(nil)                        // C-p
+        case 2: deleteForward(nil)                  // C-d
+        case 40: killToEndOfLine()                  // C-k
+        case 16: yankEmacsKillRing()                // C-y
+        case 13: killEmacsRegionOrWord()            // C-w
+        case 5: cancelEmacsCommand()                // C-g
+        case 1: AppState.shared.showFindReplace = true // C-s
+        case 44: undoManager?.undo()                // C-/
+        case 49: emacsMark = selectedRange().location // C-Space
+        default: return false
+        }
+        return true
+    }
+
+    private func killToEndOfLine() {
+        let ns = string as NSString
+        let selection = selectedRange()
+        if selection.length > 0 {
+            emacsKillRing = ns.substring(with: selection)
+            insertText("", replacementRange: selection)
+            return
+        }
+
+        let line = ns.lineRange(for: NSRange(location: min(selection.location, ns.length), length: 0))
+        var end = NSMaxRange(line)
+        while end > line.location {
+            let character = ns.character(at: end - 1)
+            guard character == 10 || character == 13 else { break }
+            end -= 1
+        }
+        let range = NSRange(location: selection.location, length: max(0, end - selection.location))
+        guard range.length > 0 else { return }
+        emacsKillRing = ns.substring(with: range)
+        insertText("", replacementRange: range)
+    }
+
+    private func yankEmacsKillRing() {
+        guard !emacsKillRing.isEmpty else { return }
+        insertText(emacsKillRing, replacementRange: selectedRange())
+    }
+
+    private func killEmacsRegionOrWord() {
+        let selection = selectedRange()
+        if selection.length > 0 {
+            emacsKillRing = (string as NSString).substring(with: selection)
+            insertText("", replacementRange: selection)
+            return
+        }
+
+        let ns = string as NSString
+        let caret = min(selection.location, ns.length)
+        var start = caret
+        while start > 0, ![" ", "\t", "\n"].contains(ns.substring(with: NSRange(location: start - 1, length: 1))) {
+            start -= 1
+        }
+        let range = NSRange(location: start, length: caret - start)
+        guard range.length > 0 else { return }
+        emacsKillRing = ns.substring(with: range)
+        insertText("", replacementRange: range)
+    }
+
+    private func cancelEmacsCommand() {
+        emacsMark = nil
+        AppState.shared.showFindReplace = false
+        AppState.shared.showGoToLine = false
+        setSelectedRange(NSRange(location: selectedRange().location, length: 0))
     }
 
     // MARK: - AI
@@ -1131,6 +1391,7 @@ final class IrisTextView: NSTextView {
     // MARK: - Mouse, tasks, multi-cursor
 
     override func mouseDown(with event: NSEvent) {
+        AppState.shared.currentTextView = self
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let point = convert(event.locationInWindow, from: nil)
 
@@ -1198,6 +1459,11 @@ final class IrisTextView: NSTextView {
     }
 
     override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        if settings.editingMode == .vim, vimEngine.mode != .insert {
+            super.insertText(insertString, replacementRange: replacementRange)
+            return
+        }
+
         guard !extraCursors.isEmpty,
               let value = insertString as? String,
               !value.isEmpty,

@@ -65,11 +65,27 @@ final class AppState: ObservableObject {
             if oldValue.aiConfiguration != settings.aiConfiguration {
                 ai.apply(configuration: settings.aiConfiguration)
             }
+            if oldValue.disabledPluginIDs != settings.disabledPluginIDs {
+                reloadPlugins()
+            }
+            if oldValue.editingMode != settings.editingMode {
+                editorModeLabel = nil
+                NotificationCenter.default.post(name: .resetEditorMode, object: nil)
+            }
         }
     }
 
     @Published private(set) var cursorLine = 1
     @Published private(set) var cursorColumn = 1
+
+    /// Selection reported by the editor, used by plugins and commands.
+    @Published private(set) var currentSelection = NSRange(location: 0, length: 0)
+
+    /// Current Vim/Emacs mode badge, e.g. `VIM · NORMAL`; nil in Standard mode.
+    @Published private(set) var editorModeLabel: String?
+
+    /// The focused AppKit editor, adopted so plugin commands can apply undoable edits.
+    weak var currentTextView: IrisTextView?
 
     @Published var showFindReplace = false {
         didSet {
@@ -151,6 +167,15 @@ final class AppState: ObservableObject {
     @Published private(set) var isAIWorking = false
     @Published var aiStatusMessage: String?
 
+    // MARK: - Plugins
+
+    @Published private(set) var installedPlugins: [InstalledPlugin] = []
+    @Published private(set) var pluginCommands: [PluginCommandDescriptor] = []
+    @Published private(set) var pluginExporters: [PluginExporterDescriptor] = []
+    @Published private(set) var pluginErrors: [String] = []
+
+    private let pluginHost = PluginHost.shared
+
     private var vaultRefreshTask: Task<Void, Never>?
     private var vaultRefreshScheduled = false
     private var lastVaultRoot: URL?
@@ -202,6 +227,7 @@ final class AppState: ObservableObject {
         tabs = [document]
         restoreSession()
         observeChanges()
+        reloadPlugins()
         refreshVault()
         if let root = effectiveVaultRoot {
             lastVaultRoot = root.standardizedFileURL
@@ -624,13 +650,171 @@ final class AppState: ObservableObject {
 
     func printDocument() {
         let title = document.displayName
-        let html = MarkdownHTMLExport.document(from: document.text, title: title)
+        let html = MarkdownHTMLExport.document(
+            from: document.text,
+            title: title,
+            using: settings.previewTheme
+        )
         Task { @MainActor in
             do {
                 try await MarkdownPDFExporter.printHTML(html, jobTitle: title)
             } catch {
                 presentError("Couldn’t print the document.", error: error)
             }
+        }
+    }
+
+    // MARK: - Plugins
+
+    /// Rescans the plugins folder and publishes the commands/exporters it contributes.
+    func reloadPlugins() {
+        let result = pluginHost.loadPlugins(disabledIDs: Set(settings.disabledPluginIDs))
+        installedPlugins = result.plugins
+        pluginErrors = result.errors
+        pluginCommands = result.plugins.filter(\.isEnabled).flatMap(\.commands)
+        pluginExporters = result.plugins.filter(\.isEnabled).flatMap(\.exporters)
+    }
+
+    func openPluginsFolder() {
+        let folder = pluginHost.pluginsDirectory
+        NSWorkspace.shared.activateFileViewerSelecting([folder])
+    }
+
+    func installSamplePlugin() {
+        do {
+            let folder = try pluginHost.installSamplePlugin()
+            reloadPlugins()
+            NSWorkspace.shared.activateFileViewerSelecting([folder])
+        } catch {
+            presentError("Couldn’t install the sample plugin.", error: error)
+        }
+    }
+
+    func setPluginEnabled(_ pluginID: String, enabled: Bool) {
+        if enabled {
+            settings.disabledPluginIDs.removeAll { $0 == pluginID }
+        } else if !settings.disabledPluginIDs.contains(pluginID) {
+            settings.disabledPluginIDs.append(pluginID)
+        }
+    }
+
+    func runPluginCommand(_ command: PluginCommandDescriptor) {
+        let selection = currentTextView?.selectedRange() ?? currentSelection
+        let context = PluginCommandContext(
+            text: document.text,
+            selection: selection,
+            documentName: document.displayName,
+            filePath: document.fileURL?.path,
+            insertText: { [weak self] value in
+                guard let self else { return }
+                self.applyPluginEdit(
+                    range: self.currentTextView?.selectedRange() ?? self.currentSelection,
+                    replacement: value
+                )
+            },
+            replaceSelection: { [weak self] value in
+                guard let self else { return }
+                let range = self.currentTextView?.selectedRange() ?? self.currentSelection
+                self.applyPluginEdit(range: range, replacement: value)
+            },
+            setText: { [weak self] value in
+                guard let self else { return }
+                self.document.text = value
+                self.document.isDirty = true
+                self.currentTextView?.setPlainText(value)
+            },
+            setSelection: { [weak self] location, length in
+                guard let self else { return }
+                let ns = self.document.text as NSString
+                let safeLocation = min(max(0, location), ns.length)
+                let safeLength = min(max(0, length), ns.length - safeLocation)
+                let range = NSRange(location: safeLocation, length: safeLength)
+                self.currentSelection = range
+                self.currentTextView?.setSelectedRange(range)
+                self.currentTextView?.scrollRangeToVisible(range)
+            },
+            save: { [weak self] in
+                _ = self?.saveDocument()
+            },
+            alert: { [weak self] title, message in
+                self?.presentInfo(title, message: message)
+            },
+            setAccent: { [weak self] hex in
+                guard let self, AccentTheme.color(fromHex: hex) != nil else { return }
+                self.settings.accent = .custom
+                self.settings.accentHex = hex.hasPrefix("#") ? hex : "#" + hex
+            },
+            setPreviewTheme: { [weak self] name in
+                guard let self else { return }
+                let normalized = name.lowercased().replacingOccurrences(of: "-", with: "")
+                let theme = PreviewTheme.allCases.first {
+                    $0.rawValue.lowercased().replacingOccurrences(of: "-", with: "") == normalized
+                }
+                if let theme { self.settings.previewTheme = theme }
+            },
+            setAppearance: { [weak self] name in
+                guard let self else { return }
+                let normalized = name.lowercased().replacingOccurrences(of: "-", with: "")
+                let appearance = AppAppearance.allCases.first {
+                    $0.rawValue.lowercased().replacingOccurrences(of: "-", with: "") == normalized
+                }
+                if let appearance { self.settings.appearance = appearance }
+            }
+        )
+
+        pluginHost.execute(commandID: command.id, context: context)
+        if let error = pluginHost.lastError {
+            presentInfo("Plugin error", message: error)
+        }
+        currentTextView?.window?.makeFirstResponder(currentTextView)
+    }
+
+    func exportWithPlugin(_ exporter: PluginExporterDescriptor) {
+        let title = (document.displayName as NSString).deletingPathExtension
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: exporter.fileExtension) ?? .html]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = (title.isEmpty ? "Untitled" : title) + "." + exporter.fileExtension
+        panel.message = "Export using “\(exporter.title)” from \(exporter.pluginName)."
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let html = pluginHost.exportHTML(
+            exporterID: exporter.id,
+            markdown: document.text,
+            title: title.isEmpty ? "Untitled" : title,
+            theme: settings.previewTheme
+        ) else {
+            presentInfo("Plugin export failed", message: pluginHost.lastError ?? "The exporter returned no output.")
+            return
+        }
+
+        do {
+            try html.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            presentError("Couldn’t export “\(url.lastPathComponent)”.", error: error)
+        }
+    }
+
+    /// Applies a plugin edit through the focused text view so it participates in undo.
+    private func applyPluginEdit(range: NSRange, replacement: String) {
+        let ns = document.text as NSString
+        let location = min(max(0, range.location), ns.length)
+        let length = min(max(0, range.length), ns.length - location)
+        let safeRange = NSRange(location: location, length: length)
+
+        if let textView = currentTextView {
+            textView.insertText(replacement, replacementRange: safeRange)
+            let caret = safeRange.location + (replacement as NSString).length
+            textView.setSelectedRange(NSRange(location: caret, length: 0))
+            textView.scrollRangeToVisible(NSRange(location: caret, length: 0))
+            currentSelection = NSRange(location: caret, length: 0)
+        } else {
+            document.text = ns.replacingCharacters(in: safeRange, with: replacement)
+            document.isDirty = true
+            currentSelection = NSRange(
+                location: safeRange.location + (replacement as NSString).length,
+                length: 0
+            )
         }
     }
 
@@ -1678,6 +1862,23 @@ final class AppState: ObservableObject {
                 self?.cursorColumn = position.column
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .cursorDidChange)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] note in
+                guard let location = note.userInfo?["selectionLocation"] as? Int,
+                      let length = note.userInfo?["selectionLength"] as? Int else { return }
+                self?.currentSelection = NSRange(location: location, length: length)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .editorModeDidChange)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] note in
+                let label = note.userInfo?["label"] as? String
+                self?.editorModeLabel = (label?.isEmpty == false) ? label : nil
+            }
+            .store(in: &cancellables)
     }
 
     private func updateFindMatches(query: String, text: String) {
@@ -1731,4 +1932,6 @@ extension Notification.Name {
     static let aiRewriteSelectionRequest = Notification.Name("IrisEditor.aiRewriteSelectionRequest")
     static let pasteAsMarkdown = Notification.Name("IrisEditor.pasteAsMarkdown")
     static let keybindingOverrideApplied = Notification.Name("IrisEditor.keybindingOverrideApplied")
+    static let editorModeDidChange = Notification.Name("IrisEditor.editorModeDidChange")
+    static let resetEditorMode = Notification.Name("IrisEditor.resetEditorMode")
 }

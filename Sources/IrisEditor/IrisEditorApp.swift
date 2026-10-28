@@ -153,6 +153,7 @@ struct IrisEditorApp: App {
                 Button(L10n.exportPDF) {
                     appState.exportPDF()
                 }
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .exportPDF))
 
                 Button(L10n.exportRTF) {
                     appState.exportRTF()
@@ -271,6 +272,45 @@ struct IrisEditorApp: App {
 
                 Text(appState.ai.availabilityDescription)
                     .disabled(true)
+            }
+
+            CommandMenu(L10n.pluginsMenu) {
+                if appState.pluginCommands.isEmpty {
+                    Text(L10n.noPlugins)
+                        .disabled(true)
+                } else {
+                    ForEach(appState.pluginCommands) { command in
+                        Button(command.title) {
+                            appState.runPluginCommand(command)
+                        }
+                        .irisKeyboardShortcut(command.shortcut.flatMap { KeybindingParser.shortcut(from: $0) })
+                    }
+                }
+
+                if !appState.pluginExporters.isEmpty {
+                    Divider()
+                    Menu("Export with Plugin") {
+                        ForEach(appState.pluginExporters) { exporter in
+                            Button("\(exporter.title) — \(exporter.pluginName)") {
+                                appState.exportWithPlugin(exporter)
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
+                Button(L10n.reloadPlugins) {
+                    appState.reloadPlugins()
+                }
+
+                Button(L10n.openPluginsFolder) {
+                    appState.openPluginsFolder()
+                }
+
+                Button(L10n.installSamplePlugin) {
+                    appState.installSamplePlugin()
+                }
             }
 
             CommandMenu(L10n.vaultMenu) {

@@ -5,6 +5,7 @@ import SwiftUI
 enum AccentTheme: String, Codable, CaseIterable, Identifiable {
     case systemBlue, systemPurple, systemTeal, systemPink
     case systemOrange, systemGreen, systemIndigo, graphite
+    case custom
 
     var id: String { rawValue }
 
@@ -18,6 +19,7 @@ enum AccentTheme: String, Codable, CaseIterable, Identifiable {
         case .systemGreen: return "Green"
         case .systemIndigo: return "Indigo"
         case .graphite: return "Graphite"
+        case .custom: return "Custom"
         }
     }
 
@@ -31,10 +33,104 @@ enum AccentTheme: String, Codable, CaseIterable, Identifiable {
         case .systemGreen: return .systemGreen
         case .systemIndigo: return .systemIndigo
         case .graphite: return .systemGray
+        case .custom: return .systemBlue
         }
     }
 
     var color: Color { Color(nsColor: nsColor) }
+
+    /// Parses `#RRGGBB` or `#RGB` so plugins and the color picker share one format.
+    static func color(fromHex raw: String) -> Color? {
+        var hex = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        if hex.count == 3 {
+            hex = hex.map { "\($0)\($0)" }.joined()
+        }
+        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return nil }
+        return Color(
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255
+        )
+    }
+
+    static func hexString(from color: Color) -> String {
+        guard let rgb = NSColor(color).usingColorSpace(.sRGB) else { return "#4A90E2" }
+        return String(
+            format: "#%02X%02X%02X",
+            Int(round(rgb.redComponent * 255)),
+            Int(round(rgb.greenComponent * 255)),
+            Int(round(rgb.blueComponent * 255))
+        )
+    }
+}
+
+/// Window appearance chosen in Settings. High Contrast pins a dark, stronger-bordered
+/// palette that works well on projectors and in bright rooms.
+enum AppAppearance: String, Codable, CaseIterable, Identifiable {
+    case system, light, dark, highContrast
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        case .highContrast: return "High Contrast"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .light: return "sun.max"
+        case .dark: return "moon"
+        case .highContrast: return "circle.righthalf.filled.inverse"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark, .highContrast: return .dark
+        }
+    }
+
+    var isHighContrast: Bool { self == .highContrast }
+}
+
+/// Keyboard model for the editor. `standard` keeps native macOS behavior; the modal
+/// and Emacs options are implemented in `VimEngine` and `IrisTextView`.
+enum EditingMode: String, Codable, CaseIterable, Identifiable {
+    case standard, vim, emacs
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .standard: return "Standard"
+        case .vim: return "Vim"
+        case .emacs: return "Emacs"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .standard: return "Native macOS text editing and shortcuts."
+        case .vim: return "Modal editing: Normal, Insert, Visual, and command-line modes."
+        case .emacs: return "Control and Option key navigation and kill/yank."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .standard: return "keyboard"
+        case .vim: return "character.cursor.ibeam"
+        case .emacs: return "option"
+        }
+    }
 }
 
 /// Colour treatment for the rendered Markdown preview.
@@ -109,7 +205,9 @@ struct EditorSettings: Codable, Equatable {
     var wordWrap: Bool = false
 
     // Appearance
+    var appearance: AppAppearance = .system
     var accent: AccentTheme = .systemBlue
+    var accentHex: String = "#4A90E2"
     var previewTheme: PreviewTheme = .system
 
     // Writing modes
@@ -117,6 +215,10 @@ struct EditorSettings: Codable, Equatable {
     var focusMode: Bool = false
     var smartTableNavigation: Bool = true
     var wikiAutocomplete: Bool = true
+    var editingMode: EditingMode = .standard
+
+    // Plugins
+    var disabledPluginIDs: [String] = []
 
     /// Command id → canonical shortcut string, e.g. `"zenMode": "control+command+z"`.
     var keybindingOverrides: [String: String] = [:]
@@ -145,6 +247,16 @@ struct EditorSettings: Codable, Equatable {
         Font.custom(fontFamily, size: fontSize)
     }
 
+    /// The accent actually painted in the UI, resolving the custom hex when needed.
+    var accentColor: Color {
+        if accent == .custom {
+            return AccentTheme.color(fromHex: accentHex) ?? .accentColor
+        }
+        return accent.color
+    }
+
+    var isHighContrast: Bool { appearance.isHighContrast }
+
     var tabInterval: CGFloat {
         let spaceWidth = (" " as NSString).size(withAttributes: [.font: font]).width
         return max(1, spaceWidth * CGFloat(max(1, tabWidth)))
@@ -156,9 +268,9 @@ struct EditorSettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case fontFamily, fontSize, tabWidth, highlightCurrentLine
-        case showLineNumbers, wordWrap, accent, previewTheme
+        case showLineNumbers, wordWrap, appearance, accent, accentHex, previewTheme
         case typewriterMode, focusMode, smartTableNavigation, wikiAutocomplete
-        case keybindingOverrides, aiConfiguration
+        case editingMode, disabledPluginIDs, keybindingOverrides, aiConfiguration
     }
 
     init(from decoder: Decoder) throws {
@@ -176,8 +288,12 @@ struct EditorSettings: Codable, Equatable {
             ?? defaults.showLineNumbers
         wordWrap = try container.decodeIfPresent(Bool.self, forKey: .wordWrap)
             ?? defaults.wordWrap
+        appearance = try container.decodeIfPresent(AppAppearance.self, forKey: .appearance)
+            ?? defaults.appearance
         accent = try container.decodeIfPresent(AccentTheme.self, forKey: .accent)
             ?? defaults.accent
+        accentHex = try container.decodeIfPresent(String.self, forKey: .accentHex)
+            ?? defaults.accentHex
         previewTheme = try container.decodeIfPresent(PreviewTheme.self, forKey: .previewTheme)
             ?? defaults.previewTheme
         typewriterMode = try container.decodeIfPresent(Bool.self, forKey: .typewriterMode)
@@ -188,6 +304,10 @@ struct EditorSettings: Codable, Equatable {
             ?? defaults.smartTableNavigation
         wikiAutocomplete = try container.decodeIfPresent(Bool.self, forKey: .wikiAutocomplete)
             ?? defaults.wikiAutocomplete
+        editingMode = try container.decodeIfPresent(EditingMode.self, forKey: .editingMode)
+            ?? defaults.editingMode
+        disabledPluginIDs = try container.decodeIfPresent([String].self, forKey: .disabledPluginIDs)
+            ?? defaults.disabledPluginIDs
         keybindingOverrides = try container.decodeIfPresent(
             [String: String].self,
             forKey: .keybindingOverrides
