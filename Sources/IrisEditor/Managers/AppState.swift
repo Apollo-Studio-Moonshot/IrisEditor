@@ -1811,6 +1811,9 @@ final class AppState: ObservableObject {
             .debounce(for: .seconds(2), scheduler: RunLoop.main)
             .sink { [weak self] change in
                 guard let self else { return }
+                // Do not persist uncommitted input-method text (for example Pinyin
+                // candidates); committing triggers another change that saves normally.
+                guard self.currentTextView?.isComposingText != true else { return }
                 guard change.id == self.document.id,
                       self.document.isDirty,
                       let url = self.document.fileURL else {
@@ -1828,6 +1831,7 @@ final class AppState: ObservableObject {
             .debounce(for: .seconds(1.5), scheduler: RunLoop.main)
             .sink { [weak self] change in
                 guard let self,
+                      self.currentTextView?.isComposingText != true,
                       change.id == self.document.id,
                       self.document.fileURL == nil,
                       self.document.isDirty,

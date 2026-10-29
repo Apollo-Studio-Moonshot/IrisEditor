@@ -52,6 +52,17 @@ struct MarkdownPlainTextTests {
     @Test func countsWordsWithoutMarkers() {
         #expect(MarkdownPlainText.words(in: "**bold text** here") == 3)
     }
+
+    @Test func countsChineseCharactersAsWords() {
+        #expect(MarkdownPlainText.words(in: "你好世界") == 4)
+        #expect(MarkdownPlainText.words(in: "Hello 世界") == 3)
+        #expect(MarkdownPlainText.words(in: "你好，世界！") == 4)
+        #expect(MarkdownPlainText.words(in: "**你好** 世界") == 4)
+    }
+
+    @Test func keepsHangulWordsWhitespaceDelimited() {
+        #expect(MarkdownPlainText.words(in: "안녕하세요 세계") == 2)
+    }
 }
 
 struct MarkdownHighlighterTests {
@@ -122,6 +133,14 @@ struct EditorDocumentTests {
         #expect(document.wordCount == 4)
         #expect(document.characterCount == 23)
         #expect(document.utf8ByteCount == 23)
+    }
+
+    @Test func countsCJKStatistics() {
+        let document = EditorDocument()
+        document.text = "# 标题\n你好世界"
+
+        #expect(document.wordCount == 6)
+        #expect(document.characterCount == 7)
     }
 
     @Test func untitledDocumentUsesDefaultName() {

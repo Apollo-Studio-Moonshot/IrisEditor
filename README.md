@@ -55,6 +55,9 @@ Electron, no dependencies, and no project bloat.
   quick-format toolbar
 - **Markdown-aware statistics** — word and character counts strip syntax markers so the
   status bar reports visible content
+- **Chinese, Japanese, and Korean text** — the editor defers to the system input method
+  while text is composing (candidate arrows, Return, Tab, and Escape work as expected),
+  counts each CJK character as a word, and moves Vim `w`/`b`/`e` by CJK character
 - TextKit editor with an `NSRulerView` line-number gutter, current-line highlight,
   and live find-match highlighting
 - **Find & Replace** — case-insensitive by default with optional *Match Case* and

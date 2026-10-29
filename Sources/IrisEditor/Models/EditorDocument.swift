@@ -58,7 +58,7 @@ final class EditorDocument: ObservableObject, Identifiable {
     /// status bar asks for line, word, and character counts on every body evaluation.
     private func recomputeStatistics() {
         let visible = MarkdownPlainText.stripped(text)
-        visibleWordCount = visible.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+        visibleWordCount = CJKText.wordCount(in: visible)
         visibleCharacterCount = visible.count
         cachedLineIndex = TextLineIndex(text)
     }

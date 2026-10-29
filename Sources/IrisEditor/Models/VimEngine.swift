@@ -532,27 +532,94 @@ struct VimEngine {
 
     private func wordForward(_ index: Int, in ns: NSString) -> Int {
         var position = min(index, ns.length)
-        while position < ns.length, !isWhitespace(ns.character(at: position)) { position += 1 }
-        while position < ns.length, isWhitespace(ns.character(at: position)) { position += 1 }
+
+        if position < ns.length, !isWhitespace(at: position, in: ns) {
+            if isCJKWord(at: position, in: ns) {
+                // Each CJK character is its own word.
+                position = nextCharacterIndex(after: position, in: ns)
+            } else {
+                while position < ns.length,
+                      !isWhitespace(at: position, in: ns),
+                      !isCJKWord(at: position, in: ns) {
+                    position = nextCharacterIndex(after: position, in: ns)
+                }
+            }
+        }
+
+        while position < ns.length, isWhitespace(at: position, in: ns) {
+            position = nextCharacterIndex(after: position, in: ns)
+        }
         return position
     }
 
     private func wordBackward(_ index: Int, in ns: NSString) -> Int {
         var position = min(index, ns.length)
-        if position > 0 { position -= 1 }
-        while position > 0, isWhitespace(ns.character(at: position)) { position -= 1 }
-        while position > 0, !isWhitespace(ns.character(at: position - 1)) { position -= 1 }
+        if position > 0 { position = previousCharacterIndex(before: position, in: ns) }
+
+        while position > 0, isWhitespace(at: position, in: ns) {
+            position = previousCharacterIndex(before: position, in: ns)
+        }
+
+        if isCJKWord(at: position, in: ns) { return position }
+
+        while position > 0 {
+            let previous = previousCharacterIndex(before: position, in: ns)
+            if isWhitespace(at: previous, in: ns) || isCJKWord(at: previous, in: ns) {
+                break
+            }
+            position = previous
+        }
         return position
     }
 
     private func wordEnd(_ index: Int, in ns: NSString) -> Int {
         var position = min(index, ns.length)
-        if position < ns.length, !isWhitespace(ns.character(at: position)) {
-            position += 1
+
+        if position < ns.length, !isWhitespace(at: position, in: ns) {
+            if isCJKWord(at: position, in: ns) {
+                return position
+            }
+            position = nextCharacterIndex(after: position, in: ns)
         }
-        while position < ns.length, isWhitespace(ns.character(at: position)) { position += 1 }
-        while position < ns.length, !isWhitespace(ns.character(at: position)) { position += 1 }
-        return position > 0 ? position - 1 : 0
+
+        while position < ns.length, isWhitespace(at: position, in: ns) {
+            position = nextCharacterIndex(after: position, in: ns)
+        }
+
+        if position < ns.length, isCJKWord(at: position, in: ns) {
+            return position
+        }
+
+        while position < ns.length,
+              !isWhitespace(at: position, in: ns),
+              !isCJKWord(at: position, in: ns) {
+            position = nextCharacterIndex(after: position, in: ns)
+        }
+
+        return position > 0 ? previousCharacterIndex(before: position, in: ns) : 0
+    }
+
+    private func isWhitespace(at index: Int, in ns: NSString) -> Bool {
+        guard index >= 0, index < ns.length else { return false }
+        return isWhitespace(ns.character(at: index))
+    }
+
+    /// True when the composed character at `index` is a CJK ideograph or kana syllable.
+    private func isCJKWord(at index: Int, in ns: NSString) -> Bool {
+        guard index >= 0, index < ns.length else { return false }
+        let range = ns.rangeOfComposedCharacterSequence(at: index)
+        return ns.substring(with: range).unicodeScalars.contains { CJKText.isWordScalar($0) }
+    }
+
+    /// Steps over a full composed character so surrogate pairs are never split.
+    private func nextCharacterIndex(after index: Int, in ns: NSString) -> Int {
+        guard index < ns.length else { return ns.length }
+        return min(ns.length, NSMaxRange(ns.rangeOfComposedCharacterSequence(at: index)))
+    }
+
+    private func previousCharacterIndex(before index: Int, in ns: NSString) -> Int {
+        guard index > 0 else { return 0 }
+        return ns.rangeOfComposedCharacterSequence(at: index - 1).location
     }
 
     // MARK: - Edits

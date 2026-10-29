@@ -23,8 +23,11 @@ enum MarkdownFileType {
 enum MarkdownPlainText {
 
     /// Number of visible words after removing Markdown markers.
+    ///
+    /// Chinese and Japanese text is counted per character because those scripts do
+    /// not separate words with spaces; other scripts stay whitespace-delimited.
     static func words(in text: String) -> Int {
-        stripped(text).split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+        CJKText.wordCount(in: stripped(text))
     }
 
     /// Number of visible characters after removing Markdown markers (whitespace included).

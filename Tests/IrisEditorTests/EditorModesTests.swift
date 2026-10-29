@@ -110,6 +110,32 @@ struct VimEngineTests {
         let jumped = engine.handle(key: .returnKey, text: text, selection: NSRange(location: 0, length: 0))
         #expect(jumped.selection.location == 4)
     }
+
+    @Test func cjkCharactersAreSeparateWordsForMotions() {
+        var engine = VimEngine()
+        let text = "你好 world"
+
+        let first = press("w", on: &engine, text: text, selection: NSRange(location: 0, length: 0))
+        #expect(first.selection.location == 1)
+
+        let second = press("w", on: &engine, text: text, selection: first.selection)
+        #expect(second.selection.location == 3)
+
+        let back = press("b", on: &engine, text: text, selection: second.selection)
+        #expect(back.selection.location == 1)
+
+        let end = press("e", on: &engine, text: text, selection: NSRange(location: 0, length: 0))
+        #expect(end.selection.location == 0)
+    }
+
+    @Test func cjkCharacterIsDeletedAsOneWord() {
+        var engine = VimEngine()
+        let text = "你好 world"
+        _ = press("d", on: &engine, text: text, selection: NSRange(location: 0, length: 0))
+        let result = press("w", on: &engine, text: text, selection: NSRange(location: 0, length: 0))
+        #expect(result.text == "好 world")
+        #expect(result.selection.location == 0)
+    }
 }
 
 struct AppearanceSettingsTests {

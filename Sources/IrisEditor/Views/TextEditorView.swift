@@ -80,12 +80,16 @@ struct TextEditorViewRepresentable: NSViewRepresentable {
         }
 
         if textView.string != text || isDocumentSwitch {
-            let viewport = isDocumentSwitch ? EditorViewportStore.viewport(for: documentID) : nil
-            textView.setPlainText(
-                text,
-                restoringSelection: viewport?.selection,
-                scrollOrigin: viewport?.scrollOrigin
-            )
+            // Never rewrite the storage while an input method has uncommitted text;
+            // doing so discards the composition and corrupts the caret.
+            if isDocumentSwitch || !textView.isComposingText {
+                let viewport = isDocumentSwitch ? EditorViewportStore.viewport(for: documentID) : nil
+                textView.setPlainText(
+                    text,
+                    restoringSelection: viewport?.selection,
+                    scrollOrigin: viewport?.scrollOrigin
+                )
+            }
         }
 
         textView.applySettings(settings)
@@ -566,9 +570,27 @@ final class IrisTextView: NSTextView {
         if !isApplyingExternalText {
             postCursorPosition()
             recomputeMarkdownHighlights()
-            updateWikiAutocompleteTrigger()
+            if isComposingText {
+                // Marked text is not part of the document yet, so it must not drive
+                // wiki-link suggestions.
+                if wikiTriggerLocation != nil {
+                    wikiTriggerLocation = nil
+                    AppState.shared.dismissWikiSuggestions()
+                }
+            } else {
+                updateWikiAutocompleteTrigger()
+            }
             if ghostSuggestion != nil { clearGhostSuggestion() }
         }
+    }
+
+    /// True while the system input method (for example Pinyin, Kana, or Hangul)
+    /// holds uncommitted marked text. Custom key and edit handling must be skipped
+    /// in that state so candidate selection, commits, and cancellation work.
+    var isComposingText: Bool {
+        if hasMarkedText() { return true }
+        let marked = markedRange()
+        return marked.location != NSNotFound && marked.length > 0
     }
 
     /// Recomputes highlights from the current string content.
@@ -653,6 +675,10 @@ final class IrisTextView: NSTextView {
     // MARK: - Typing
 
     override func insertTab(_ sender: Any?) {
+        guard !isComposingText else {
+            super.insertTab(sender)
+            return
+        }
         if settings.smartTableNavigation, moveAcrossTable(forward: true) {
             return
         }
@@ -661,6 +687,10 @@ final class IrisTextView: NSTextView {
     }
 
     override func insertBacktab(_ sender: Any?) {
+        guard !isComposingText else {
+            super.insertBacktab(sender)
+            return
+        }
         if settings.smartTableNavigation, moveAcrossTable(forward: false) {
             return
         }
@@ -822,6 +852,10 @@ final class IrisTextView: NSTextView {
     /// Continues Markdown lists and block quotes when Return is pressed. On an empty
     /// item the marker is removed instead, so Return exits the container.
     override func insertNewline(_ sender: Any?) {
+        guard !isComposingText else {
+            super.insertNewline(sender)
+            return
+        }
         let selection = selectedRange()
         guard selection.length == 0 else {
             super.insertNewline(sender)
@@ -947,6 +981,14 @@ final class IrisTextView: NSTextView {
     // MARK: - Wiki autocomplete
 
     private func updateWikiAutocompleteTrigger() {
+        guard !isComposingText else {
+            if wikiTriggerLocation != nil {
+                wikiTriggerLocation = nil
+                AppState.shared.dismissWikiSuggestions()
+            }
+            return
+        }
+
         if settings.editingMode == .vim, vimEngine.mode != .insert {
             wikiTriggerLocation = nil
             NotificationCenter.default.post(name: .wikiAutocompleteRequest, object: self)
@@ -1028,6 +1070,13 @@ final class IrisTextView: NSTextView {
     override func keyDown(with event: NSEvent) {
         let keyCode = event.keyCode
         AppState.shared.currentTextView = self
+
+        // Let the input method own all keys while composing Chinese, Japanese, or
+        // Korean text: arrows, Return, Tab, and Escape select candidates there.
+        if isComposingText {
+            super.keyDown(with: event)
+            return
+        }
 
         if AppState.shared.showWikiSuggestions {
             switch keyCode {
@@ -1459,6 +1508,11 @@ final class IrisTextView: NSTextView {
     }
 
     override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        if isComposingText {
+            super.insertText(insertString, replacementRange: replacementRange)
+            return
+        }
+
         if settings.editingMode == .vim, vimEngine.mode != .insert {
             super.insertText(insertString, replacementRange: replacementRange)
             return
@@ -1507,21 +1561,27 @@ final class IrisTextView: NSTextView {
     }
 
     override func deleteBackward(_ sender: Any?) {
+        guard !isComposingText else {
+            super.deleteBackward(sender)
+            return
+        }
+
         guard !extraCursors.isEmpty else {
             super.deleteBackward(sender)
             return
         }
 
         let primary = selectedRange()
+        let ns = string as NSString
         var deletions: [NSRange] = []
 
         if primary.length > 0 {
             deletions.append(primary)
         } else if primary.location > 0 {
-            deletions.append(NSRange(location: primary.location - 1, length: 1))
+            deletions.append(ns.rangeOfComposedCharacterSequence(at: primary.location - 1))
         }
         for cursor in extraCursors where cursor > 0 {
-            deletions.append(NSRange(location: cursor - 1, length: 1))
+            deletions.append(ns.rangeOfComposedCharacterSequence(at: cursor - 1))
         }
         guard !deletions.isEmpty else { return }
 
@@ -1533,10 +1593,16 @@ final class IrisTextView: NSTextView {
         }
         undoManager?.endUndoGrouping()
 
-        let primaryShift = deletions.filter { $0.location < primary.location }.count
+        // Shift each caret by the UTF-16 length of the edits before it, which keeps
+        // multi-cursor deletion correct for composed characters and CJK text.
+        let primaryShift = deletions
+            .filter { $0.location < primary.location }
+            .reduce(0) { $0 + $1.length }
         let newPrimary = max(0, primary.location - primaryShift)
         extraCursors = originalExtras.compactMap { cursor in
-            let shift = deletions.filter { $0.location < cursor }.count
+            let shift = deletions
+                .filter { $0.location < cursor }
+                .reduce(0) { $0 + $1.length }
             let updated = cursor - shift
             return updated > 0 ? updated : nil
         }
