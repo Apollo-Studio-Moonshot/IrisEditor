@@ -25,18 +25,20 @@ enum MarkdownPDFExporter {
     private static let loadTimeout: TimeInterval = 15
     private static let layoutDelay: Duration = .milliseconds(400)
 
-    static func exportPDF(html: String, to url: URL) async throws {
-        let data = try await makePDF(html: html)
+    static func exportPDF(html: String, to url: URL, baseURL: URL? = nil) async throws {
+        let data = try await makePDF(html: html, baseURL: baseURL)
         try data.write(to: url, options: [.atomic])
     }
 
-    static func makePDF(html: String) async throws -> Data {
+    /// `baseURL` must be the folder of the note being exported so relative image and
+    /// link destinations (`assets/pic.png`) resolve; with `nil` they render as broken.
+    static func makePDF(html: String, baseURL: URL? = nil) async throws -> Data {
         let webView = WKWebView(frame: CGRect(origin: .zero, size: pageSize))
         let waiter = PDFNavigationWaiter()
         webView.navigationDelegate = waiter
         defer { webView.navigationDelegate = nil }
 
-        webView.loadHTMLString(html, baseURL: nil)
+        webView.loadHTMLString(html, baseURL: baseURL)
         try await waiter.wait(timeout: loadTimeout)
         try await Task.sleep(for: layoutDelay)
         try Task.checkCancellation()
@@ -53,7 +55,7 @@ enum MarkdownPDFExporter {
         }
     }
 
-    static func printHTML(_ html: String, jobTitle: String) async throws {
+    static func printHTML(_ html: String, jobTitle: String, baseURL: URL? = nil) async throws {
         let webView = WKWebView(frame: CGRect(origin: .zero, size: pageSize))
         let waiter = PDFNavigationWaiter()
         webView.navigationDelegate = waiter
@@ -73,7 +75,7 @@ enum MarkdownPDFExporter {
             webView.navigationDelegate = nil
         }
 
-        webView.loadHTMLString(html, baseURL: nil)
+        webView.loadHTMLString(html, baseURL: baseURL)
         try await waiter.wait(timeout: loadTimeout)
         try await Task.sleep(for: layoutDelay)
         try Task.checkCancellation()

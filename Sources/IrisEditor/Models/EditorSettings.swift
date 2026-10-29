@@ -166,6 +166,16 @@ enum PreviewTheme: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// Backing colour for `==highlight==`, tuned per theme so it stays readable.
+    var highlightBackground: Color {
+        switch self {
+        case .system: return Color.yellow.opacity(0.35)
+        case .paper: return Color(red: 1.0, green: 0.92, blue: 0.55)
+        case .sepia: return Color(red: 0.98, green: 0.87, blue: 0.52)
+        case .midnight: return Color(red: 0.55, green: 0.45, blue: 0.08)
+        }
+    }
+
     var secondary: Color {
         switch self {
         case .system: return .secondary

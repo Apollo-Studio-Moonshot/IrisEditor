@@ -47,6 +47,37 @@ enum MarkdownHTMLExport {
           border-left: 3px solid var(--border);
           color: var(--muted);
         }
+        mark {
+          background: var(--highlight, #fff2a8);
+          color: inherit;
+          border-radius: 3px;
+          padding: 0 0.15em;
+        }
+        .callout {
+          margin: 0 0 1em;
+          padding: 0.7em 0.9em;
+          border-left: 3px solid var(--callout, var(--accent));
+          border-radius: 6px;
+          background: color-mix(in srgb, var(--callout, var(--accent)) 10%, transparent);
+        }
+        .callout > summary {
+          cursor: pointer;
+          font-weight: 600;
+          list-style: none;
+          display: flex;
+          gap: 0.4em;
+          align-items: baseline;
+          color: var(--callout, var(--accent));
+        }
+        .callout > summary::-webkit-details-marker { display: none; }
+        .callout-body > :first-child { margin-top: 0.5em; }
+        .callout-body > :last-child { margin-bottom: 0; }
+        .callout-note, .callout-abstract, .callout-info, .callout-todo { --callout: #4a7bd8; }
+        .callout-tip, .callout-success { --callout: #2c9a5e; }
+        .callout-question, .callout-example { --callout: #8c59c9; }
+        .callout-warning { --callout: #d98a10; }
+        .callout-failure, .callout-danger, .callout-bug { --callout: #d43f3f; }
+        .callout-quote { --callout: #6b7280; }
         code {
           font: 0.92em/1.5 ui-monospace, "SF Mono", Menlo, monospace;
           background: var(--surface);
@@ -279,6 +310,22 @@ enum MarkdownHTMLExport {
             return "<p>\(renderInline(text, references: references))</p>"
 
         case .blockQuote(let blocks):
+            if let callout = MarkdownCallout.parse(blocks) {
+                let name = callout.kind.rawValue
+                let foldClass = callout.isFoldable ? " callout-foldable" : ""
+                let collapsed = callout.isCollapsed ? " collapsed" : ""
+                let caret = callout.isFoldable
+                    ? "<span class=\"callout-caret\">\(callout.isCollapsed ? "&#9656;" : "&#9662;")</span>"
+                    : ""
+                return """
+                <details class="callout callout-\(name)\(foldClass)\(collapsed)"\(callout.isCollapsed ? "" : " open")>
+                <summary>\(caret)<span class=\"callout-title\">\(renderInline(callout.title, references: references))</span></summary>
+                <div class=\"callout-body\">
+                \(render(blocks: callout.body, references: references))
+                </div>
+                </details>
+                """
+            }
             return "<blockquote>\n\(render(blocks: blocks, references: references))\n</blockquote>"
 
         case .codeBlock(let language, let lines):
@@ -393,6 +440,9 @@ enum MarkdownHTMLExport {
 
         case .strikethrough(let children):
             return "<del>\(renderInline(children, references: references))</del>"
+
+        case .highlight(let children):
+            return "<mark>\(renderInline(children, references: references))</mark>"
 
         case .code(let value):
             return "<code>\(escape(value))</code>"

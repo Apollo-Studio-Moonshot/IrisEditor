@@ -12,8 +12,14 @@ struct MarkdownPreviewView: View {
     var theme: PreviewTheme = .system
     var onToggleTask: (@MainActor @Sendable (String) -> Void)? = nil
 
+    /// Last parse that finished for a settled text buffer. Re-parsing the whole document
+    /// inside `body` on every keystroke made a long note degrade linearly while typing,
+    /// so the parse is debounced and the previous result is reused meanwhile.
+    @State private var parsedSource: String = ""
+    @State private var parsedDocument: MarkdownDocument?
+
     var body: some View {
-        let document = MarkdownBlockParser.parseDocument(markdown)
+        let document = displayedDocument
 
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
@@ -46,6 +52,36 @@ struct MarkdownPreviewView: View {
         .environment(\.previewTheme, theme)
         .environment(\.togglePreviewTask, onToggleTask)
         .environment(\.colorScheme, theme.isDark ? .dark : .light)
+        .task(id: markdown) {
+            await reparseDebounced()
+        }
+    }
+
+    /// The document to render right now: the cached parse when it matches, a synchronous
+    /// first parse so the very first frame is complete, and otherwise the stale-but-close
+    /// previous parse until the debounced job lands.
+    private var displayedDocument: MarkdownDocument {
+        if parsedSource == markdown, let parsedDocument {
+            return parsedDocument
+        }
+        if parsedDocument == nil {
+            return MarkdownBlockParser.parseDocument(markdown)
+        }
+        return parsedDocument ?? MarkdownBlockParser.parseDocument(markdown)
+    }
+
+    /// Waits for a pause in typing (`Task` identity is the text, so every keystroke
+    /// cancels the previous wait) before paying for a full block + inline parse.
+    private func reparseDebounced() async {
+        let source = markdown
+        if parsedDocument != nil {
+            try? await Task.sleep(for: .milliseconds(140))
+            if Task.isCancelled { return }
+        }
+        let document = MarkdownBlockParser.parseDocument(source)
+        if Task.isCancelled { return }
+        parsedSource = source
+        parsedDocument = document
     }
 }
 
@@ -90,22 +126,26 @@ private struct MarkdownBlockView: View {
             paragraph(text)
 
         case .blockQuote(let blocks):
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(blocks.enumerated()), id: \.offset) { _, child in
-                    MarkdownBlockView(
-                        block: child,
-                        references: references,
-                        baseURL: baseURL
-                    )
+            if let callout = MarkdownCallout.parse(blocks) {
+                MarkdownCalloutView(callout: callout, references: references, baseURL: baseURL)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(blocks.enumerated()), id: \.offset) { _, child in
+                        MarkdownBlockView(
+                            block: child,
+                            references: references,
+                            baseURL: baseURL
+                        )
+                    }
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 12)
-            .padding(.vertical, 4)
-            .overlay(alignment: .leading) {
-                Capsule()
-                    .fill(Color.secondary.opacity(0.4))
-                    .frame(width: 3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 12)
+                .padding(.vertical, 4)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.4))
+                        .frame(width: 3)
+                }
             }
 
         case .codeBlock(let language, let lines):
@@ -124,7 +164,8 @@ private struct MarkdownBlockView: View {
                 alignments: alignments,
                 rows: rows,
                 references: references,
-                baseURL: baseURL
+                baseURL: baseURL,
+                theme: theme
             )
 
         case .thematicBreak:
@@ -352,7 +393,7 @@ private struct MarkdownBlockView: View {
     }
 
     private func inline(size: CGFloat) -> MarkdownInlineText {
-        MarkdownInlineText(references: references, baseURL: baseURL, size: size)
+        MarkdownInlineText(references: references, baseURL: baseURL, size: size, theme: theme)
     }
 
     private func headingSize(_ level: Int) -> CGFloat {
@@ -572,47 +613,10 @@ private struct MermaidDiagramView: View {
     }
 
     private func computeLevels() -> [Int: [String]] {
-        var adjacency: [String: [String]] = [:]
-        var indegree: [String: Int] = [:]
-        for node in chart.nodes {
-            adjacency[node.id] = []
-            indegree[node.id] = 0
-        }
-        for edge in chart.edges {
-            adjacency[edge.from, default: []].append(edge.to)
-            indegree[edge.to, default: 0] += 1
-        }
-
-        var level: [String: Int] = [:]
-        var queue: [String] = chart.nodes
-            .filter { (indegree[$0.id] ?? 0) == 0 }
-            .map(\.id)
-        if queue.isEmpty, let first = chart.nodes.first {
-            queue = [first.id]
-        }
-        for id in queue { level[id] = 0 }
-
-        var cursor = 0
-        while cursor < queue.count {
-            let current = queue[cursor]
-            cursor += 1
-            for next in adjacency[current] ?? [] {
-                let candidate = (level[current] ?? 0) + 1
-                if candidate > (level[next] ?? -1) {
-                    level[next] = candidate
-                    queue.append(next)
-                }
-            }
-        }
-        for node in chart.nodes where level[node.id] == nil {
-            level[node.id] = 0
-        }
-
-        var grouped: [Int: [String]] = [:]
-        for node in chart.nodes {
-            grouped[level[node.id] ?? 0, default: []].append(node.id)
-        }
-        return grouped
+        // Delegate to the renderer so the preview and the SVG/PDF exporters share one
+        // cycle-safe implementation (this used to be a relaxation loop that could spin
+        // forever on `A --> B; B --> A`).
+        MermaidParser.levelGroups(chart)
     }
 
     private func computePositions(
@@ -649,6 +653,7 @@ private struct MarkdownInlineText {
     let references: [String: MarkdownLinkReference]
     let baseURL: URL?
     let size: CGFloat
+    var theme: PreviewTheme = .system
 
     func text(_ raw: String) -> Text {
         Text(attributed(MarkdownInlineParser(references: references).parse(raw)))
@@ -708,6 +713,19 @@ private struct MarkdownInlineText {
                     italic: italic,
                     strikethrough: true
                 )
+
+            case .highlight(let children):
+                var nested = AttributedString()
+                append(
+                    children,
+                    to: &nested,
+                    bold: bold,
+                    italic: italic,
+                    strikethrough: strikethrough
+                )
+                nested.backgroundColor = theme.highlightBackground
+                nested.foregroundColor = theme.text
+                result.append(nested)
 
             case .code(let value):
                 var run = AttributedString(value)
@@ -879,7 +897,7 @@ private struct MarkdownImageView: View {
         .contentShape(.rect)
         .onTapGesture {
             if let destination = link.flatMap(resolve) {
-                NSWorkspace.shared.open(destination)
+                MarkdownLinkOpener.open(destination)
             }
         }
     }
@@ -967,12 +985,121 @@ private struct MarkdownImageView: View {
 // MARK: - Tables
 
 /// Renders a parsed GFM pipe table with per-column alignment and inline Markdown cells.
+/// Renders an Obsidian callout (`> [!note] Title`) as a tinted, icon-led card.
+private struct MarkdownCalloutView: View {
+    let callout: MarkdownCallout
+    let references: [String: MarkdownLinkReference]
+    let baseURL: URL?
+    @Environment(\.previewTheme) private var theme
+    @State private var isExpanded: Bool
+
+    init(
+        callout: MarkdownCallout,
+        references: [String: MarkdownLinkReference],
+        baseURL: URL?
+    ) {
+        self.callout = callout
+        self.references = references
+        self.baseURL = baseURL
+        _isExpanded = State(initialValue: !callout.isCollapsed)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                guard callout.isFoldable else { return }
+                withAnimation(.snappy(duration: 0.18)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: callout.kind.symbolName)
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(callout.title)
+                        .font(.system(size: 13, weight: .semibold))
+                    if callout.isFoldable {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(callout.kind.tint(for: theme))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!callout.isFoldable)
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(callout.body.enumerated()), id: \.offset) { _, child in
+                        MarkdownBlockView(
+                            block: child,
+                            references: references,
+                            baseURL: baseURL
+                        )
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(callout.kind.tint(for: theme).opacity(0.10))
+        )
+        .overlay(alignment: .leading) {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 6,
+                bottomLeadingRadius: 6,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 0
+            )
+            .fill(callout.kind.tint(for: theme))
+            .frame(width: 3)
+        }
+    }
+}
+
+extension MarkdownCalloutKind {
+    var symbolName: String {
+        switch self {
+        case .note: return "pencil"
+        case .abstract: return "doc.text"
+        case .info: return "info.circle"
+        case .todo: return "checkmark.circle.badge.questionmark"
+        case .tip: return "flame"
+        case .success: return "checkmark.circle"
+        case .question: return "questionmark.circle"
+        case .warning: return "exclamationmark.triangle"
+        case .failure: return "xmark.circle"
+        case .danger: return "bolt"
+        case .bug: return "ladybug"
+        case .example: return "list.bullet"
+        case .quote: return "quote.opening"
+        }
+    }
+
+    func tint(for theme: PreviewTheme) -> Color {
+        // Slightly desaturated system colours keep the card readable on the dark theme.
+        switch self {
+        case .note, .abstract, .info, .todo: return .accentColor
+        case .tip, .success: return Color(red: 0.16, green: 0.60, blue: 0.36)
+        case .question, .example: return Color(red: 0.55, green: 0.35, blue: 0.80)
+        case .warning: return Color(red: 0.85, green: 0.55, blue: 0.05)
+        case .failure, .danger, .bug: return Color(red: 0.85, green: 0.25, blue: 0.25)
+        case .quote: return Color(red: 0.45, green: 0.45, blue: 0.50)
+        }
+    }
+}
+
 private struct MarkdownTablePreview: View {
     let header: [String]
     let alignments: [MarkdownTableAlignment]
     let rows: [[String]]
     let references: [String: MarkdownLinkReference]
     let baseURL: URL?
+    var theme: PreviewTheme = .system
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1009,7 +1136,7 @@ private struct MarkdownTablePreview: View {
 
     @ViewBuilder
     private func cell(_ text: String, alignment: MarkdownTableAlignment, isHeader: Bool) -> some View {
-        MarkdownInlineText(references: references, baseURL: baseURL, size: 13)
+        MarkdownInlineText(references: references, baseURL: baseURL, size: 13, theme: theme)
             .text(text)
             .font(.system(size: 13, weight: isHeader ? .semibold : .regular))
             .frame(maxWidth: .infinity, alignment: frameAlignment(alignment))
@@ -1024,5 +1151,40 @@ private struct MarkdownTablePreview: View {
         case .center: return .center
         case .right: return .trailing
         }
+    }
+}
+
+
+/// Opens a link target from the preview without ever *launching* an executable.
+///
+/// A note may point at any local path (`[x](file:///Applications/Calculator.app)`).
+/// Handing that straight to `NSWorkspace.open` runs the app on a single click, so
+/// bundles, scripts, and executable files are revealed in Finder instead.
+enum MarkdownLinkOpener {
+    /// Extensions that would execute code, or open a package that contains it.
+    private static let executableExtensions: Set<String> = [
+        "app", "command", "tool", "sh", "bash", "zsh", "py", "rb", "pl", "jar",
+        "pkg", "mpkg", "dmg", "workflow", "action", "scpt", "applescript", "terminal",
+        "prefpane", "service", "vbs", "exe", "bat"
+    ]
+
+    static func open(_ url: URL) {
+        guard url.isFileURL else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+
+        let resolved = url.resolvingSymlinksInPath()
+        let attributes = try? FileManager.default.attributesOfItem(atPath: resolved.path)
+        let isDirectory = (attributes?[.type] as? FileAttributeType) == .typeDirectory
+        let isExecutable = FileManager.default.isExecutableFile(atPath: resolved.path)
+        let isBundleLike = executableExtensions.contains(resolved.pathExtension.lowercased())
+
+        if isBundleLike || (isExecutable && !isDirectory) {
+            NSWorkspace.shared.activateFileViewerSelecting([resolved])
+            return
+        }
+
+        NSWorkspace.shared.open(resolved)
     }
 }

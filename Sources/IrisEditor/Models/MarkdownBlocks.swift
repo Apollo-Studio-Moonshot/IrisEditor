@@ -19,6 +19,102 @@ struct MarkdownListItem: Equatable {
     var blocks: [MarkdownBlock]
 }
 
+/// The callout types Obsidian recognises in `> [!type] title` blockquotes.
+enum MarkdownCalloutKind: String, Equatable, CaseIterable {
+    case note, abstract, info, todo, tip, success, question, warning, failure, danger, bug,
+         example, quote
+
+    /// Obsidian accepts several aliases per callout; the first one is canonical.
+    static func from(_ raw: String) -> MarkdownCalloutKind? {
+        switch raw.lowercased() {
+        case "note": return .note
+        case "abstract", "summary", "tldr": return .abstract
+        case "info": return .info
+        case "todo": return .todo
+        case "tip", "hint", "important": return .tip
+        case "success", "check", "done": return .success
+        case "question", "help", "faq": return .question
+        case "warning", "caution", "attention": return .warning
+        case "failure", "fail", "missing": return .failure
+        case "danger", "error": return .danger
+        case "bug": return .bug
+        case "example": return .example
+        case "quote", "cite": return .quote
+        default: return nil
+        }
+    }
+
+    /// Default heading shown when the callout line supplies no title.
+    var defaultTitle: String {
+        switch self {
+        case .note: return "Note"
+        case .abstract: return "Abstract"
+        case .info: return "Info"
+        case .todo: return "Todo"
+        case .tip: return "Tip"
+        case .success: return "Success"
+        case .question: return "Question"
+        case .warning: return "Warning"
+        case .failure: return "Failure"
+        case .danger: return "Danger"
+        case .bug: return "Bug"
+        case .example: return "Example"
+        case .quote: return "Quote"
+        }
+    }
+}
+
+/// An Obsidian callout: a blockquote whose first line is `[!type] optional title`,
+/// optionally followed by `+` (expanded) or `-` (collapsed) for foldability.
+struct MarkdownCallout: Equatable {
+    let kind: MarkdownCalloutKind
+    let title: String
+    let isFoldable: Bool
+    let isCollapsed: Bool
+    let body: [MarkdownBlock]
+
+    /// Returns the callout represented by a blockquote's children, or `nil` when the
+    /// quote is ordinary text.
+    static func parse(_ blocks: [MarkdownBlock]) -> MarkdownCallout? {
+        guard case .paragraph(let text)? = blocks.first else { return nil }
+        let lines = text.components(separatedBy: "\n")
+        guard let first = lines.first else { return nil }
+
+        let trimmed = first.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("[!"), let close = trimmed.firstIndex(of: "]") else {
+            return nil
+        }
+        let typeStart = trimmed.index(trimmed.startIndex, offsetBy: 2)
+        let rawType = String(trimmed[typeStart..<close])
+        guard let kind = MarkdownCalloutKind.from(rawType) else { return nil }
+
+        var remainder = String(trimmed[trimmed.index(after: close)...])
+            .trimmingCharacters(in: .whitespaces)
+        var isFoldable = false
+        var isCollapsed = false
+        if let marker = remainder.first, marker == "+" || marker == "-" {
+            isFoldable = true
+            isCollapsed = marker == "-"
+            remainder = String(remainder.dropFirst()).trimmingCharacters(in: .whitespaces)
+        }
+
+        var body: [MarkdownBlock] = []
+        let restOfParagraph = lines.dropFirst().joined(separator: "\n")
+        if !restOfParagraph.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body.append(.paragraph(text: restOfParagraph))
+        }
+        body.append(contentsOf: blocks.dropFirst())
+
+        return MarkdownCallout(
+            kind: kind,
+            title: remainder.isEmpty ? kind.defaultTitle : remainder,
+            isFoldable: isFoldable,
+            isCollapsed: isCollapsed,
+            body: body
+        )
+    }
+}
+
 /// A link reference definition (`[label]: https://example.com "title"`), resolved by the
 /// inline parser for `[text][label]`, `[label][]`, and `[label]` links.
 struct MarkdownLinkReference: Equatable {

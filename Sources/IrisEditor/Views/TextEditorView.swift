@@ -79,17 +79,28 @@ struct TextEditorViewRepresentable: NSViewRepresentable {
             context.coordinator.documentID = documentID
         }
 
-        if textView.string != text || isDocumentSwitch {
-            // Never rewrite the storage while an input method has uncommitted text;
-            // doing so discards the composition and corrupts the caret.
-            if isDocumentSwitch || !textView.isComposingText {
-                let viewport = isDocumentSwitch ? EditorViewportStore.viewport(for: documentID) : nil
-                textView.setPlainText(
-                    text,
-                    restoringSelection: viewport?.selection,
-                    scrollOrigin: viewport?.scrollOrigin
-                )
+        if isDocumentSwitch {
+            let viewport = EditorViewportStore.viewport(for: documentID)
+            textView.setPlainText(
+                text,
+                restoringSelection: viewport?.selection,
+                scrollOrigin: viewport?.scrollOrigin
+            )
+        } else if textView.string != text, !textView.isComposingText {
+            // Same document, externally rewritten (task checkbox, formatter, plugin…):
+            // apply the smallest undoable edit so the caret, the scroll position and the
+            // undo stack survive. Never rewrite the storage while an input method has
+            // uncommitted text — that discards the composition and corrupts the caret.
+            if !textView.applyExternalText(text) {
+                textView.setPlainText(text, preservingViewport: true)
             }
+        }
+
+        // Only now is the text for `documentID` really on screen, so this is the point
+        // at which a deferred "jump to line" can be delivered safely.
+        textView.displayedDocumentID = documentID
+        if let pendingLine = AppState.shared.takePendingReveal(for: documentID) {
+            textView.scrollToLine(pendingLine)
         }
 
         textView.applySettings(settings)
@@ -198,6 +209,11 @@ final class IrisTextView: NSTextView {
     /// Folder used to save pasted or dropped images into `assets/`.
     var documentURL: URL?
 
+    /// Identity of the document whose text is currently in this editor. Only updated
+    /// after the text has actually been applied, so a broadcast action can tell whether
+    /// this pane is ready to act on it.
+    var displayedDocumentID: UUID?
+
     private let customTextStorage: NSTextStorage
     private var settings: EditorSettings
     private var appliedSettings: EditorSettings?
@@ -208,6 +224,9 @@ final class IrisTextView: NSTextView {
 
     // Multi-cursor support
     private var extraCursors: [Int] = []
+
+    /// Coalesces whole-document highlight passes while the user types.
+    private var pendingHighlightWork: DispatchWorkItem?
 
     // Wiki link autocomplete
     private var wikiTriggerLocation: Int?
@@ -517,11 +536,62 @@ final class IrisTextView: NSTextView {
 
     // MARK: - External content
 
+    /// Applies an external rewrite of the *same* document as the smallest possible
+    /// undoable edit. Returns false when the change is too large or nothing differs,
+    /// letting the caller fall back to a full replacement.
+    @discardableResult
+    func applyExternalText(_ newText: String) -> Bool {
+        guard string != newText, !isComposingText else { return false }
+        guard let change = Self.difference(from: string, to: newText) else { return false }
+        let oldLength = (string as NSString).length
+        // A wholesale rewrite is cheaper as a straight replacement, and its diff would
+        // make the undo stack misleading.
+        guard change.range.length <= 8192, oldLength <= 400_000 else { return false }
+
+        let saved = selectedRange()
+        let target = change.range
+        let replacement = change.replacement
+        let delta = (replacement as NSString).length - target.length
+
+        isApplyingExternalText = true
+        guard shouldChangeText(in: target, replacementString: replacement) else {
+            isApplyingExternalText = false
+            return false
+        }
+        textStorage?.replaceCharacters(in: target, with: replacement)
+
+        // Re-map the caret across the edit so it does not snap back to the top.
+        var caret = saved.location
+        if caret > NSMaxRange(target) {
+            caret += delta
+        } else if caret > target.location {
+            caret = target.location + (replacement as NSString).length
+        }
+        let newLength = (newText as NSString).length
+        let clampedCaret = min(max(0, caret), newLength)
+
+        didChangeText()
+        isApplyingExternalText = false
+
+        selectedRange = NSRange(location: clampedCaret, length: 0)
+        cachedLineIndex = nil
+        needsDisplay = true
+        recomputeMarkdownHighlights()
+        postCursorPosition()
+        return true
+    }
+
     func setPlainText(
         _ newText: String,
         restoringSelection selection: NSRange? = nil,
-        scrollOrigin: NSPoint? = nil
+        scrollOrigin: NSPoint? = nil,
+        preservingViewport: Bool = false
     ) {
+        // Capture the caret/scroll state first when the caller wants it carried over
+        // (a same-document edit such as toggling a task checkbox in the preview).
+        let previousSelection = selectedRange()
+        let previousScroll = enclosingScrollView?.contentView.bounds.origin
+
         isApplyingExternalText = true
         let savedDelegate = delegate
         delegate = nil
@@ -530,12 +600,26 @@ final class IrisTextView: NSTextView {
         isApplyingExternalText = false
 
         applyTextAttributes(settings)
-        undoManager?.removeAllActions()
+        if !preservingViewport {
+            undoManager?.removeAllActions()
+        }
+
+        // Multi-cursor positions, wiki-link triggers, ghost text and the Emacs mark all
+        // index into the *old* string; carrying them into a different (usually shorter)
+        // buffer makes `deleteBackward` compute an out-of-range range and throw.
+        extraCursors.removeAll()
+        wikiTriggerLocation = nil
+        clearGhostSuggestion()
+        emacsMark = nil
 
         let textLength = (newText as NSString).length
         if let selection {
             let location = min(max(0, selection.location), textLength)
             let length = min(max(0, selection.length), textLength - location)
+            selectedRange = NSRange(location: location, length: length)
+        } else if preservingViewport {
+            let location = min(max(0, previousSelection.location), textLength)
+            let length = min(max(0, previousSelection.length), textLength - location)
             selectedRange = NSRange(location: location, length: length)
         } else {
             selectedRange = NSRange(location: 0, length: 0)
@@ -547,11 +631,12 @@ final class IrisTextView: NSTextView {
         needsDisplay = true
         enclosingScrollView?.verticalRulerView?.needsDisplay = true
 
-        if let scrollOrigin, let scrollView = enclosingScrollView {
+        let requestedOrigin = scrollOrigin ?? (preservingViewport ? previousScroll : nil)
+        if let requestedOrigin, let scrollView = enclosingScrollView {
             layoutSubtreeIfNeeded()
             let contentHeight = scrollView.documentView?.frame.height ?? 0
             let maxY = max(0, contentHeight - scrollView.contentSize.height)
-            let clamped = NSPoint(x: 0, y: min(max(0, scrollOrigin.y), maxY))
+            let clamped = NSPoint(x: 0, y: min(max(0, requestedOrigin.y), maxY))
             scrollView.contentView.scroll(to: clamped)
             scrollView.reflectScrolledClipView(scrollView.contentView)
         } else {
@@ -569,7 +654,7 @@ final class IrisTextView: NSTextView {
         enclosingScrollView?.verticalRulerView?.needsDisplay = true
         if !isApplyingExternalText {
             postCursorPosition()
-            recomputeMarkdownHighlights()
+            scheduleMarkdownHighlightRefresh()
             if isComposingText {
                 // Marked text is not part of the document yet, so it must not drive
                 // wiki-link suggestions.
@@ -594,7 +679,26 @@ final class IrisTextView: NSTextView {
     }
 
     /// Recomputes highlights from the current string content.
+    ///
+    /// The highlighter is a whole-document pass, so running it synchronously on every
+    /// keystroke makes typing in a long note quadratic. Interactive edits are coalesced
+    /// through a short debounce; document loads call `recomputeMarkdownHighlights()`
+    /// directly so the first frame is always coloured.
+    private func scheduleMarkdownHighlightRefresh() {
+        pendingHighlightWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingHighlightWork = nil
+            self.recomputeMarkdownHighlights()
+        }
+        pendingHighlightWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: work)
+    }
+
     private func recomputeMarkdownHighlights() {
+        // Flush any queued refresh so a direct call cannot be reordered after it.
+        pendingHighlightWork?.cancel()
+        pendingHighlightWork = nil
         let highlights = MarkdownHighlighter.highlights(in: string)
         applyMarkdownHighlights(highlights)
     }
@@ -645,6 +749,20 @@ final class IrisTextView: NSTextView {
         }
         if ghostSuggestion != nil {
             clearGhostSuggestion()
+        }
+
+        // A `[[` trigger is only valid while the caret stays inside the same line, right
+        // after it. Leaving that window must drop the suggestion bar: otherwise accepting
+        // a suggestion later would replace everything between the stale offset and the
+        // new caret position.
+        if let trigger = wikiTriggerLocation {
+            let ns = string as NSString
+            let caret = selectedRange().location
+            let lineEnd = NSMaxRange(ns.lineRange(for: NSRange(location: trigger, length: 0)))
+            if caret < trigger + 2 || caret > lineEnd {
+                wikiTriggerLocation = nil
+                AppState.shared.dismissWikiSuggestions()
+            }
         }
     }
 
@@ -894,8 +1012,23 @@ final class IrisTextView: NSTextView {
 
     // MARK: - Notifications
 
+    /// False when a broadcast action is addressed to a document this pane is not
+    /// showing — otherwise one navigation click moves the caret in both panes.
+    private func isAddressedToMe(_ notification: Notification) -> Bool {
+        guard let target = notification.userInfo?["documentID"] as? UUID else { return true }
+        guard let mine = displayedDocumentID else { return true }
+        return target == mine
+    }
+
     @objc private func handleGoToLine(_ notification: Notification) {
         guard let line = notification.userInfo?["line"] as? Int else { return }
+        guard isAddressedToMe(notification) else { return }
+        if let target = notification.userInfo?["documentID"] as? UUID {
+            // Wait until this pane actually shows the target document; the pending reveal
+            // is delivered from `updateNSView` once the text has been swapped in.
+            guard displayedDocumentID == target else { return }
+            AppState.shared.clearPendingReveal(for: target)
+        }
         scrollToLine(line)
     }
 
@@ -913,6 +1046,7 @@ final class IrisTextView: NSTextView {
     }
 
     @objc private func handleFindHighlight(_ notification: Notification) {
+        guard isAddressedToMe(notification) else { return }
         let ranges = notification.userInfo?["ranges"] as? [NSRange] ?? []
         let current = notification.userInfo?["current"] as? NSRange
         let shouldScroll = notification.userInfo?["scroll"] as? Bool ?? false
@@ -931,6 +1065,7 @@ final class IrisTextView: NSTextView {
     }
 
     @objc private func handleReplacement(_ notification: Notification) {
+        guard isAddressedToMe(notification) else { return }
         guard let ranges = notification.userInfo?["ranges"] as? [NSRange],
               let replacement = notification.userInfo?["replacement"] as? String else {
             return
@@ -960,6 +1095,7 @@ final class IrisTextView: NSTextView {
     }
 
     @objc private func handleInsertSnippet(_ notification: Notification) {
+        guard isAddressedToMe(notification) else { return }
         guard let snippet = notification.userInfo?["text"] as? String else { return }
 
         let selection = selectedRange()
@@ -1050,13 +1186,44 @@ final class IrisTextView: NSTextView {
     }
 
     @objc private func handleWikiAutocompleteAccept(_ notification: Notification) {
-        guard let target = notification.userInfo?["target"] as? String,
-              let trigger = wikiTriggerLocation else {
+        guard isAddressedToMe(notification),
+              let target = notification.userInfo?["target"] as? String else {
             return
         }
 
-        let caret = selectedRange().location
-        let range = NSRange(location: trigger, length: max(0, caret - trigger))
+        // Re-derive the trigger from the caret instead of trusting the stored offset: it
+        // can be stale (click, scroll, an edit elsewhere), and replacing the span between
+        // a stale offset and the current caret would delete unrelated text.
+        let ns = string as NSString
+        let caret = min(selectedRange().location, ns.length)
+        let lineStart = ns.lineRange(for: NSRange(location: caret, length: 0)).location
+        guard caret - 2 >= lineStart else {
+            wikiTriggerLocation = nil
+            AppState.shared.dismissWikiSuggestions()
+            return
+        }
+        var trigger: Int?
+        var index = caret - 2
+        while index >= lineStart {
+            if ns.substring(with: NSRange(location: index, length: 2)) == "[[" {
+                trigger = index
+                break
+            }
+            index -= 2
+        }
+        guard let trigger else {
+            wikiTriggerLocation = nil
+            AppState.shared.dismissWikiSuggestions()
+            return
+        }
+        let query = ns.substring(with: NSRange(location: trigger + 2, length: caret - trigger - 2))
+        guard !query.contains("]]"), !query.contains("\n") else {
+            wikiTriggerLocation = nil
+            AppState.shared.dismissWikiSuggestions()
+            return
+        }
+
+        let range = NSRange(location: trigger, length: caret - trigger)
         let replacement = "[[\(target)]]"
         insertText(replacement, replacementRange: range)
         setCaret(range.location + (replacement as NSString).length)
@@ -1234,6 +1401,12 @@ final class IrisTextView: NSTextView {
 
     /// Finds the smallest replacement that turns `old` into `new` so modal edits can
     /// flow through `insertText(_:replacementRange:)` and remain undoable.
+    /// True when `index` sits on a composed-character boundary of `text`.
+    private static func isCharacterBoundary(_ index: Int, in text: NSString) -> Bool {
+        guard index > 0, index < text.length else { return true }
+        return text.rangeOfComposedCharacterSequence(at: index).location == index
+    }
+
     private static func difference(
         from old: String,
         to new: String
@@ -1251,6 +1424,21 @@ final class IrisTextView: NSTextView {
         while suffix < shared - prefix,
               oldText.character(at: oldText.length - 1 - suffix) == newText.character(at: newText.length - 1 - suffix) {
             suffix += 1
+        }
+
+        // Never split a surrogate pair or a composed character: back both edges off to a
+        // character boundary so the replacement cannot leave a lone surrogate behind.
+        if prefix > 0, prefix < oldText.length, !isCharacterBoundary(prefix, in: oldText) {
+            prefix -= 1
+        }
+        if prefix > 0, prefix < newText.length, !isCharacterBoundary(prefix, in: newText) {
+            prefix -= 1
+        }
+        if suffix > 0, !isCharacterBoundary(oldText.length - suffix, in: oldText) {
+            suffix -= 1
+        }
+        if suffix > 0, !isCharacterBoundary(newText.length - suffix, in: newText) {
+            suffix -= 1
         }
 
         let oldRange = NSRange(location: prefix, length: oldText.length - prefix - suffix)
@@ -1355,7 +1543,7 @@ final class IrisTextView: NSTextView {
     // MARK: - AI
 
     @objc private func handleAIInlineCompletion(_ notification: Notification) {
-        _ = notification
+        guard isAddressedToMe(notification) else { return }
         aiTask?.cancel()
 
         let selection = selectedRange()
@@ -1388,7 +1576,7 @@ final class IrisTextView: NSTextView {
     }
 
     @objc private func handleAIRewrite(_ notification: Notification) {
-        _ = notification
+        guard isAddressedToMe(notification) else { return }
         let ns = string as NSString
         var range = selectedRange()
         if range.length == 0 {
@@ -1740,6 +1928,7 @@ final class IrisTextView: NSTextView {
     // MARK: - Paste as Markdown
 
     @objc private func handlePasteAsMarkdown(_ notification: Notification) {
+        guard isAddressedToMe(notification) else { return }
         pasteAsMarkdown()
     }
 
@@ -1756,6 +1945,7 @@ final class IrisTextView: NSTextView {
     }
 
     @objc private func handleToggleMarkdownFormat(_ notification: Notification) {
+        guard isAddressedToMe(notification) else { return }
         guard let prefix = notification.userInfo?["prefix"] as? String,
               let suffix = notification.userInfo?["suffix"] as? String else {
             return

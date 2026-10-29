@@ -10,6 +10,8 @@ indirect enum MarkdownInline: Equatable {
     case emphasis([MarkdownInline])
     case strong([MarkdownInline])
     case strikethrough([MarkdownInline])
+    /// Obsidian-style `==highlight==`.
+    case highlight([MarkdownInline])
     case code(String)
     case link(destination: String, title: String?, children: [MarkdownInline])
     case image(source: String, alt: String, title: String?)
@@ -27,7 +29,8 @@ extension Array where Element == MarkdownInline {
             switch inline {
             case .text(let value), .code(let value), .html(let value):
                 return value
-            case .emphasis(let children), .strong(let children), .strikethrough(let children):
+            case .emphasis(let children), .strong(let children), .strikethrough(let children),
+                 .highlight(let children):
                 return children.plainText
             case .link(_, _, let children):
                 return children.plainText
@@ -270,6 +273,7 @@ struct MarkdownInlineParser {
                             count: 1,
                             canOpen: !tag.isClosing,
                             canClose: tag.isClosing,
+                            originalCount: 1,
                             raw: raw
                         )))
                     } else {
@@ -280,6 +284,33 @@ struct MarkdownInlineParser {
                     textBuffer.append(character)
                     index += 1
                 }
+                continue
+            }
+
+            if character == "=" {
+                // `==highlight==` needs exactly two equals signs; anything else is text.
+                let runLength = countRun(characters, at: index, character: "=")
+                guard runLength == 2 else {
+                    textBuffer.append(String(repeating: "=", count: runLength))
+                    index += runLength
+                    continue
+                }
+                flushText()
+                let (canOpen, canClose) = flanking(
+                    characters,
+                    at: index,
+                    run: 2,
+                    character: "="
+                )
+                tokens.append(.delimiter(Delimiter(
+                    kind: .highlight,
+                    count: 1,
+                    canOpen: canOpen,
+                    canClose: canClose,
+                    originalCount: 2,
+                    raw: nil
+                )))
+                index += 2
                 continue
             }
 
@@ -302,6 +333,7 @@ struct MarkdownInlineParser {
                     count: runLength,
                     canOpen: canOpen,
                     canClose: canClose,
+                    originalCount: runLength,
                     raw: nil
                 )))
                 index += runLength
@@ -324,6 +356,7 @@ struct MarkdownInlineParser {
         case emphasis
         case code
         case strikethrough
+        case highlight
     }
 
     private struct Delimiter {
@@ -331,6 +364,9 @@ struct MarkdownInlineParser {
         var count: Int
         let canOpen: Bool
         let canClose: Bool
+        /// Length of the original delimiter run; `count` shrinks as it is consumed,
+        /// but CommonMark's "rule of 3" is defined on the original run lengths.
+        let originalCount: Int
         /// Original tag text for `</em>`-style delimiters; `nil` for `*`, `_`, `~`.
         let raw: String?
     }
@@ -383,6 +419,8 @@ struct MarkdownInlineParser {
                 node = .emphasis(inner)
             case .strikethrough:
                 node = .strikethrough(inner)
+            case .highlight:
+                node = .highlight(inner)
             case .code:
                 node = .code(inner.plainText)
             }
@@ -420,6 +458,11 @@ struct MarkdownInlineParser {
                opener.count > 0 {
                 if case .character(let character) = closer.kind, character == "~" {
                     if opener.count >= 2, closer.count >= 2 { return cursor }
+                } else if closer.kind == .highlight {
+                    return cursor
+                } else if violatesRuleOfThree(opener: opener, closer: closer) {
+                    cursor -= 1
+                    continue
                 } else {
                     return cursor
                 }
@@ -427,6 +470,16 @@ struct MarkdownInlineParser {
             cursor -= 1
         }
         return nil
+    }
+
+    /// CommonMark's "rule of 3": when either delimiter can both open and close,
+    /// the sum of the original run lengths must not be a multiple of 3 unless both
+    /// are. Without it `**a*b**` mispairs the inner `*` with the leading `**`.
+    private func violatesRuleOfThree(opener: Delimiter, closer: Delimiter) -> Bool {
+        guard opener.canClose || closer.canOpen else { return false }
+        let total = opener.originalCount + closer.originalCount
+        guard total % 3 == 0 else { return false }
+        return !(opener.originalCount % 3 == 0 && closer.originalCount % 3 == 0)
     }
 
     private func flatten(_ tokens: [Token]) -> [MarkdownInline] {
@@ -440,10 +493,20 @@ struct MarkdownInlineParser {
                 let literal: String
                 if let raw = delimiter.raw {
                     literal = raw
-                } else if case .character(let character) = delimiter.kind {
-                    literal = String(repeating: character, count: delimiter.count)
                 } else {
-                    literal = ""
+                    switch delimiter.kind {
+                    case .character(let character):
+                        literal = String(repeating: character, count: delimiter.count)
+                    case .highlight:
+                        // An unmatched `==` must stay in the text, not vanish.
+                        literal = String(repeating: "==", count: delimiter.count)
+                    case .strikethrough:
+                        literal = String(repeating: "~~", count: delimiter.count)
+                    case .code:
+                        literal = "`"
+                    case .strong, .emphasis:
+                        literal = ""
+                    }
                 }
                 if !literal.isEmpty {
                     appendMerged(.text(literal), to: &result)

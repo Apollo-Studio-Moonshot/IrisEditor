@@ -158,6 +158,9 @@ final class AppState: ObservableObject {
     /// Optional second document shown side-by-side.
     @Published var secondDocument: EditorDocument?
 
+    /// Monotonic id used to discard stale asynchronous search results.
+    private var vaultSearchGeneration = 0
+
     @Published var showVersionHistory = false
     @Published private(set) var versionHistory: [DocumentVersion] = []
 
@@ -241,47 +244,67 @@ final class AppState: ObservableObject {
         vaultRootURL ?? document.fileURL?.deletingLastPathComponent()
     }
 
+    /// A "jump to line" that must be delivered once the target document is on screen.
+    private var pendingReveal: (documentID: UUID, line: Int)?
+
     private func restoreSession() {
+        var restoredTabs: [EditorDocument] = []
+        var restoredSession: EditorSession?
+
         if let session = SessionStore.load() {
-            let restored: [EditorDocument] = session.openFiles.compactMap { path in
+            restoredSession = session
+            restoredTabs = session.openFiles.compactMap { path in
                 let url = URL(fileURLWithPath: path)
-                guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
-                    return nil
-                }
+                // Honour the file's own encoding instead of forcing UTF-8, otherwise a
+                // UTF-16 or Latin-1 note silently fails to reopen.
+                guard let contents = Self.readText(at: url) else { return nil }
                 let reopened = EditorDocument()
                 reopened.text = contents
                 reopened.fileURL = url
                 reopened.isDirty = false
                 return reopened
             }
-
-            if !restored.isEmpty {
-                tabs = restored
-                currentTabIndex = min(max(0, session.activeIndex), restored.count - 1)
-                document = tabs[currentTabIndex]
-                viewMode = EditorViewMode(rawValue: session.viewMode) ?? .source
-                showOutline = session.sidebarVisible
-                sidebarTab = VaultPane(rawValue: session.sidebarPane) ?? .files
-                if let vaultRoot = session.vaultRoot {
-                    vaultRootURL = URL(fileURLWithPath: vaultRoot)
-                }
-                return
-            }
         }
 
         // Crash recovery: reopen untitled drafts saved before the app exited unexpectedly.
-        let drafts = DraftStore.loadAll().filter { !$0.text.isEmpty }
-        guard !drafts.isEmpty else { return }
-        let recovered = drafts.map { draft -> EditorDocument in
-            let recoveredDocument = EditorDocument()
-            recoveredDocument.text = draft.text
-            recoveredDocument.draftID = draft.id
-            recoveredDocument.isDirty = true
-            return recoveredDocument
+        // These are additive — a normal session restore must not hide them, which used to
+        // make draft recovery unreachable and then lose the drafts for good.
+        // Drop drafts nobody will ever reopen, so the recovery folder cannot grow forever.
+        DraftStore.prune(olderThan: 14)
+        let recovered = DraftStore.loadAll()
+            .filter { !$0.text.isEmpty }
+            .map { draft -> EditorDocument in
+                let recoveredDocument = EditorDocument()
+                recoveredDocument.text = draft.text
+                recoveredDocument.draftID = draft.id
+                recoveredDocument.isDirty = true
+                return recoveredDocument
+            }
+
+        guard !restoredTabs.isEmpty || !recovered.isEmpty else { return }
+
+        tabs = restoredTabs + recovered
+        if let session = restoredSession, !restoredTabs.isEmpty {
+            currentTabIndex = min(max(0, session.activeIndex), restoredTabs.count - 1)
+            viewMode = EditorViewMode(rawValue: session.viewMode) ?? .source
+            showOutline = session.sidebarVisible
+            sidebarTab = VaultPane(rawValue: session.sidebarPane) ?? .files
+            if let vaultRoot = session.vaultRoot {
+                vaultRootURL = URL(fileURLWithPath: vaultRoot)
+            }
+        } else {
+            currentTabIndex = 0
         }
-        tabs = recovered
-        currentTabIndex = 0
-        document = recovered[0]
+        document = tabs[min(currentTabIndex, tabs.count - 1)]
+    }
+
+    /// Reads a file with its own encoding, falling back to UTF-8.
+    static func readText(at url: URL) -> String? {
+        var encoding: String.Encoding = .utf8
+        guard let text = try? String(contentsOf: url, usedEncoding: &encoding) else {
+            return try? String(contentsOf: url, encoding: .utf8)
+        }
+        return text
     }
 
     func newDocument() {
@@ -615,7 +638,11 @@ final class AppState: ObservableObject {
 
         Task { @MainActor in
             do {
-                try await MarkdownPDFExporter.exportPDF(html: html, to: url)
+                try await MarkdownPDFExporter.exportPDF(
+                    html: html,
+                    to: url,
+                    baseURL: self.document.fileURL?.deletingLastPathComponent()
+                )
             } catch {
                 presentError("Couldn’t export the PDF.", error: error)
             }
@@ -642,7 +669,7 @@ final class AppState: ObservableObject {
             return
         }
         do {
-            try data.write(to: url)
+            try data.write(to: url, options: .atomic)
         } catch {
             presentError("Couldn’t export the RTF.", error: error)
         }
@@ -657,7 +684,11 @@ final class AppState: ObservableObject {
         )
         Task { @MainActor in
             do {
-                try await MarkdownPDFExporter.printHTML(html, jobTitle: title)
+                try await MarkdownPDFExporter.printHTML(
+                    html,
+                    jobTitle: title,
+                    baseURL: self.document.fileURL?.deletingLastPathComponent()
+                )
             } catch {
                 presentError("Couldn’t print the document.", error: error)
             }
@@ -963,6 +994,9 @@ final class AppState: ObservableObject {
         for tab in tabs where tab.isDirty {
             guard confirmDiscardChanges(for: tab) else { return false }
         }
+        if let side = secondDocument, side.isDirty {
+            guard confirmDiscardChanges(for: side) else { return false }
+        }
         return true
     }
 
@@ -997,15 +1031,21 @@ final class AppState: ObservableObject {
 
     func goToLine(_ line: Int) {
         guard line > 0 else { return }
-        NotificationCenter.default.post(name: .goToLine, object: nil, userInfo: ["line": line])
+        postToEditors(.goToLine, userInfo: ["line": line])
         closeFindPanel()
     }
 
     /// Jumps to a line from the outline or quick switcher, leaving preview-only mode so
     /// the caret is actually visible.
     func reveal(line: Int) {
-        let post = {
-            NotificationCenter.default.post(name: .goToLine, object: nil, userInfo: ["line": line])
+        // Remember the target as well as broadcasting it: when `reveal` follows a
+        // document switch the editor is still showing the *previous* text, and jumping
+        // now would clamp the line against the old document and lose the position.
+        pendingReveal = (document.id, line)
+
+        let post = { [weak self] in
+            guard let self else { return }
+            self.postToEditors(.goToLine, userInfo: ["line": line])
         }
 
         guard viewMode == .preview else {
@@ -1021,6 +1061,26 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Called by an editor once it actually displays `documentID`; returns the pending
+    /// jump line for that document and clears it.
+    func takePendingReveal(for documentID: UUID) -> Int? {
+        guard let pending = pendingReveal, pending.documentID == documentID else { return nil }
+        pendingReveal = nil
+        return pending.line
+    }
+
+    func clearPendingReveal(for documentID: UUID) {
+        guard let pending = pendingReveal, pending.documentID == documentID else { return }
+        pendingReveal = nil
+    }
+
+    /// Posts a document-scoped editor action so only the pane showing `document` reacts.
+    private func postToEditors(_ name: Notification.Name, userInfo: [String: Any] = [:]) {
+        var info = userInfo
+        info["documentID"] = document.id
+        NotificationCenter.default.post(name: name, object: nil, userInfo: info)
+    }
+
     func closeFindPanel() {
         showFindReplace = false
         showGoToLine = false
@@ -1034,18 +1094,16 @@ final class AppState: ObservableObject {
     }
 
     func clearFindHighlights() {
-        NotificationCenter.default.post(
-            name: .findHighlight,
-            object: nil,
+        postToEditors(
+            .findHighlight,
             userInfo: ["ranges": [NSRange]()]
         )
     }
 
     private func postReplacement(ranges: [NSRange]) {
         guard !ranges.isEmpty else { return }
-        NotificationCenter.default.post(
-            name: .replaceMatches,
-            object: nil,
+        postToEditors(
+            .replaceMatches,
             userInfo: [
                 "ranges": ranges,
                 "replacement": replaceText
@@ -1065,7 +1123,7 @@ final class AppState: ObservableObject {
             userInfo["current"] = findMatches[findMatchIndex]
             userInfo["scroll"] = scroll
         }
-        NotificationCenter.default.post(name: .findHighlight, object: nil, userInfo: userInfo)
+        postToEditors(.findHighlight, userInfo: userInfo)
     }
 
     // MARK: - Command palette & outline
@@ -1221,7 +1279,7 @@ final class AppState: ObservableObject {
     func openInSecondPane(url: URL? = nil) {
         let targetURL = url ?? document.fileURL
         let side = EditorDocument()
-        if let targetURL, let contents = try? String(contentsOf: targetURL, encoding: .utf8) {
+        if let targetURL, let contents = Self.readText(at: targetURL) {
             side.text = contents
             side.fileURL = targetURL
             side.isDirty = false
@@ -1462,15 +1520,20 @@ final class AppState: ObservableObject {
     }
 
     func updateVaultSearch(query: String) {
+        vaultSearchGeneration += 1
+        let generation = vaultSearchGeneration
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
             vaultSearchResults = []
             return
         }
         let files = vaultFiles
+        // Results are only accepted when they belong to the newest query, so a slow
+        // search for "a" can never overwrite the results for a later "abc".
         Task.detached(priority: .userInitiated) { [weak self] in
             let results = VaultScanner.search(query, in: files)
             await MainActor.run {
-                self?.vaultSearchResults = results
+                guard let self, self.vaultSearchGeneration == generation else { return }
+                self.vaultSearchResults = results
             }
         }
     }
@@ -1563,15 +1626,15 @@ final class AppState: ObservableObject {
     // MARK: - AI
 
     func requestInlineCompletion() {
-        NotificationCenter.default.post(name: .aiInlineCompletionRequest, object: nil)
+        postToEditors(.aiInlineCompletionRequest)
     }
 
     func requestRewriteSelection() {
-        NotificationCenter.default.post(name: .aiRewriteSelectionRequest, object: nil)
+        postToEditors(.aiRewriteSelectionRequest)
     }
 
     func pasteAsMarkdown() {
-        NotificationCenter.default.post(name: .pasteAsMarkdown, object: nil)
+        postToEditors(.pasteAsMarkdown)
     }
 
     func summarizeDocument() {
@@ -1593,7 +1656,8 @@ final class AppState: ObservableObject {
     }
 
     func generateTitleAndTags() {
-        let text = document.text
+        let target = document
+        let text = target.text
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         aiStatusMessage = "Generating title and tags…"
         isAIWorking = true
@@ -1601,7 +1665,10 @@ final class AppState: ObservableObject {
             defer { isAIWorking = false }
             do {
                 let result = try await ai.titleAndTags(for: text)
-                applyMetadata(title: result.title, tags: result.tags)
+                // The user may have switched tabs while we were awaiting: apply the
+                // metadata to the document the request was made for, never to whatever
+                // happens to be in front now.
+                applyMetadata(title: result.title, tags: result.tags, to: target)
                 aiStatusMessage = nil
             } catch {
                 aiStatusMessage = nil
@@ -1611,8 +1678,8 @@ final class AppState: ObservableObject {
     }
 
     /// Rewrites (or inserts) the frontmatter block with the generated title and tags.
-    private func applyMetadata(title: String, tags: [String]) {
-        let text = document.text
+    private func applyMetadata(title: String, tags: [String], to target: EditorDocument) {
+        let text = target.text
         let body = MarkdownFrontmatterParser.parse(text)?.body ?? text
         var lines: [String] = ["---", "title: \(title)"]
         if !tags.isEmpty {
@@ -1623,8 +1690,8 @@ final class AppState: ObservableObject {
         }
         lines.append("---")
         let updated = lines.joined(separator: "\n") + "\n\n" + body
-        document.text = updated
-        document.isDirty = true
+        target.text = updated
+        target.isDirty = true
     }
 
     private func promptForName(
@@ -1678,18 +1745,16 @@ final class AppState: ObservableObject {
     /// If text is already wrapped, toggles the markers off.
     func toggleMarkdownFormat(prefix: String, suffix: String? = nil) {
         let suffix = suffix ?? prefix
-        NotificationCenter.default.post(
-            name: .toggleMarkdownFormat,
-            object: nil,
+        postToEditors(
+            .toggleMarkdownFormat,
             userInfo: ["prefix": prefix, "suffix": suffix]
         )
     }
 
     /// Inserts a Markdown snippet (e.g. a table template) at the current cursor position.
     func insertSnippet(_ text: String) {
-        NotificationCenter.default.post(
-            name: .insertSnippet,
-            object: nil,
+        postToEditors(
+            .insertSnippet,
             userInfo: ["text": text]
         )
     }
@@ -1789,11 +1854,17 @@ final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
-        let textChanges = $document.flatMap { document in
-            document.$text.map { text in
-                (id: document.id, text: text)
+        // `switchToLatest` (not `flatMap`): switching tabs must *cancel* the previous
+        // document's text subscription. With `flatMap` the old inner publisher stayed
+        // alive forever, keeping the closed document and its closure retained.
+        let textChanges = $document
+            .map { document in
+                document.$text
+                    .map { text in (id: document.id, text: text) }
+                    .eraseToAnyPublisher()
             }
-        }
+            .switchToLatest()
+            .eraseToAnyPublisher()
 
         Publishers.CombineLatest($findText, textChanges)
             .debounce(for: .milliseconds(150), scheduler: RunLoop.main)
@@ -1820,6 +1891,29 @@ final class AppState: ObservableObject {
                     return
                 }
                 _ = self.save(to: url)
+            }
+            .store(in: &cancellables)
+
+        // The second pane is a real editor too: autosave it the same way, otherwise
+        // everything typed there is lost when the pane closes or the app quits.
+        $secondDocument
+            .map { document -> AnyPublisher<(id: UUID, text: String), Never> in
+                guard let document else { return Empty().eraseToAnyPublisher() }
+                return document.$text
+                    .map { text in (id: document.id, text: text) }
+                    .eraseToAnyPublisher()
+            }
+            .switchToLatest()
+            .dropFirst()
+            .debounce(for: .seconds(2), scheduler: RunLoop.main)
+            .sink { [weak self] change in
+                guard let self,
+                      let side = self.secondDocument,
+                      side.id == change.id,
+                      side.isDirty,
+                      let url = side.fileURL else { return }
+                guard self.currentTextView?.isComposingText != true else { return }
+                _ = self.save(side, to: url)
             }
             .store(in: &cancellables)
 

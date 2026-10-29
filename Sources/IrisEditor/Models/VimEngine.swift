@@ -61,6 +61,9 @@ struct VimEngine {
 
     private var countBuffer = ""
     private var pendingOperator: Character?
+    /// Count typed *before* an operator (`3` in `d3w`'s prefix position).
+    /// Multiplied with the motion count so `2d3w` deletes six words.
+    private var pendingOperatorCount = 1
     private var pendingG = false
     private var register = ""
     private var registerIsLinewise = false
@@ -79,6 +82,7 @@ struct VimEngine {
         mode = .normal
         countBuffer = ""
         pendingOperator = nil
+        pendingOperatorCount = 1
         pendingG = false
         commandBuffer = ""
         lastStatus = nil
@@ -89,7 +93,8 @@ struct VimEngine {
     mutating func exitInsertMode(text: String, selection: NSRange) -> VimResult {
         let ns = text as NSString
         let caret = min(max(0, selection.location), ns.length)
-        let adjusted = caret > 0 ? caret - 1 : 0
+        // Step back over a whole composed character so an emoji is never split in half.
+        let adjusted = caret > 0 ? previousCharacterIndex(before: caret, in: ns) : 0
         return finish(
             text: text,
             selection: NSRange(location: adjusted, length: 0),
@@ -210,7 +215,9 @@ struct VimEngine {
             return enterInsert(at: selection.location, text: text)
         case "a":
             countBuffer = ""
-            let target = min(selection.location + 1, ns.length)
+            let target = selection.location < ns.length
+                ? nextCharacterIndex(after: selection.location, in: ns)
+                : ns.length
             return enterInsert(at: target, text: text)
         case "I":
             countBuffer = ""
@@ -251,7 +258,13 @@ struct VimEngine {
             return deleteCharacters(count: count, text: text, selection: selection)
         case "X":
             countBuffer = ""
-            let start = max(0, selection.location - count)
+            // `X` never joins lines: it stops at the start of the current line.
+            let lineBegin = lineStart(selection.location, in: ns)
+            var start = min(selection.location, ns.length)
+            for _ in 0..<count where start > lineBegin {
+                start = previousCharacterIndex(before: start, in: ns)
+            }
+            start = max(start, lineBegin)
             let range = NSRange(location: start, length: selection.location - start)
             return delete(range: range, text: text, linewise: false)
         case "D":
@@ -300,7 +313,10 @@ struct VimEngine {
             return finish(text: text, selection: selection, mode: .normal, command: .openFind)
 
         case "d", "c", "y":
-            // Keep a leading count so `3dd` acts on three lines.
+            // Keep a leading count so `3dd` acts on three lines, but start a fresh buffer
+            // so a trailing count (`d3w`) is never concatenated into `d33`.
+            pendingOperatorCount = count
+            countBuffer = ""
             pendingOperator = character
             return finish(text: text, selection: selection, mode: .normal)
 
@@ -319,6 +335,8 @@ struct VimEngine {
         let ns = text as NSString
         switch character {
         case "h", "j", "k", "l", "w", "b", "e", "0", "$":
+            // A count applies to one motion only: `v2lll` moves two, then one, then one.
+            countBuffer = ""
             let target = move(character, from: visualCursor, count: count, in: ns)
             visualCursor = target
             let selected = visualSelection(anchor: visualAnchor, cursor: target, text: ns, linewise: mode == .visualLine)
@@ -364,23 +382,39 @@ struct VimEngine {
         }
         pendingOperator = nil
         countBuffer = ""
+        // `2d3w` acts on six words: the pre-operator count multiplies the motion count.
+        let total = max(1, count) * max(1, pendingOperatorCount)
+        pendingOperatorCount = 1
 
         if character == op {
             let line = lineRange(caret, in: ns)
-            let range = repeatedLineRange(startingAt: line, count: count, in: ns)
+            let range = repeatedLineRange(startingAt: line, count: total, in: ns)
             switch op {
-            case "d": return delete(range: range, text: text, linewise: true)
-            case "c": return change(range: lineContentRange(for: range, in: ns), text: text, linewise: true)
+            case "d":
+                return delete(
+                    range: linewiseDeleteRange(range, in: ns),
+                    text: text,
+                    linewise: true,
+                    registerOverride: linewiseRegister(for: range, in: ns)
+                )
+            case "c":
+                return change(range: lineContentRange(for: range, in: ns), text: text, linewise: true)
             default:
-                register = ns.substring(with: range)
+                register = linewiseRegister(for: range, in: ns)
                 registerIsLinewise = true
                 return finish(text: text, selection: NSRange(location: range.location, length: 0), mode: .normal)
             }
         }
 
+        // Vim treats `cw` as `ce` while the cursor sits on a word, so `cw` on `ab cd`
+        // leaves ` cd` instead of swallowing the separating space.
+        let motion: Character = (op == "c" && character == "w" && !isWhitespace(at: caret, in: ns))
+            ? "e"
+            : character
+
         guard let range = operatorRange(
-            motion: character,
-            count: count,
+            motion: motion,
+            count: total,
             from: caret,
             in: ns
         ) else {
@@ -388,13 +422,33 @@ struct VimEngine {
         }
 
         switch op {
-        case "d": return delete(range: range, text: text, linewise: false)
-        case "c": return change(range: range, text: text, linewise: false)
+        case "d":
+            if motionIsLinewise(character) {
+                return delete(
+                    range: linewiseDeleteRange(range, in: ns),
+                    text: text,
+                    linewise: true,
+                    registerOverride: linewiseRegister(for: range, in: ns)
+                )
+            }
+            return delete(range: range, text: text, linewise: false)
+        case "c":
+            return change(range: range, text: text, linewise: motionIsLinewise(character))
         default:
-            register = ns.substring(with: range)
-            registerIsLinewise = false
+            if motionIsLinewise(character) {
+                register = linewiseRegister(for: range, in: ns)
+                registerIsLinewise = true
+            } else {
+                register = ns.substring(with: clampedRange(range, in: ns))
+                registerIsLinewise = false
+            }
             return finish(text: text, selection: NSRange(location: range.location, length: 0), mode: .normal)
         }
+    }
+
+    /// Motions that operate on whole lines, so the register/paste stays linewise.
+    private func motionIsLinewise(_ motion: Character) -> Bool {
+        motion == "j" || motion == "k" || motion == "G" || motion == "g"
     }
 
     private mutating func handleCommandKey(_ key: VimKey, text: String, selection: NSRange) -> VimResult {
@@ -443,9 +497,24 @@ struct VimEngine {
         let clamped = min(max(0, index), ns.length)
         switch character {
         case "h":
-            return max(0, clamped - count)
+            // `h` steps over whole composed characters and never crosses the line start.
+            let start = lineStart(clamped, in: ns)
+            var target = clamped
+            for _ in 0..<max(1, count) where target > start {
+                target = previousCharacterIndex(before: target, in: ns)
+            }
+            return max(start, target)
         case "l":
-            return min(max(0, ns.length - 1), clamped + count)
+            let contentEnd = lineContentEnd(clamped, in: ns)
+            let limit = contentEnd > lineStart(clamped, in: ns)
+                ? previousCharacterIndex(before: contentEnd, in: ns)
+                : contentEnd
+            guard clamped < limit else { return clamped }
+            var target = clamped
+            for _ in 0..<max(1, count) where target < limit {
+                target = nextCharacterIndex(after: target, in: ns)
+            }
+            return min(target, limit)
         case "j":
             return vertical(clamped, delta: count, in: ns)
         case "k":
@@ -465,7 +534,11 @@ struct VimEngine {
         case "0":
             return lineStart(clamped, in: ns)
         case "$":
-            return lineContentEnd(clamped, in: ns)
+            // Vim parks the cursor *on* the last character, not past it — otherwise a
+            // charwise visual selection started here would swallow the newline.
+            let end = lineContentEnd(clamped, in: ns)
+            let start = lineStart(clamped, in: ns)
+            return end > start ? previousCharacterIndex(before: end, in: ns) : start
         default:
             return clamped
         }
@@ -501,11 +574,14 @@ struct VimEngine {
             for _ in 0..<count where start > 0 {
                 start = lineRange(start - 1, in: ns).location
             }
-            return range(from: start, to: lineContentEnd(index, in: ns))
+            // Linewise: `dk` removes whole lines, matching `dj`.
+            return NSRange(location: start, length: NSMaxRange(current) - start)
         case "G":
-            return range(from: index, to: ns.length)
+            let start = lineStart(index, in: ns)
+            return NSRange(location: start, length: ns.length - start)
         case "g":
-            return range(from: 0, to: index)
+            // `dgg` deletes the first line through the current line, inclusive.
+            return NSRange(location: 0, length: NSMaxRange(lineRange(index, in: ns)))
         default:
             return nil
         }
@@ -663,13 +739,18 @@ struct VimEngine {
         return delete(range: range, text: text, linewise: false)
     }
 
-    private mutating func delete(range: NSRange, text: String, linewise: Bool) -> VimResult {
+    private mutating func delete(
+        range: NSRange,
+        text: String,
+        linewise: Bool,
+        registerOverride: String? = nil
+    ) -> VimResult {
         let ns = text as NSString
         let safe = clampedRange(range, in: ns)
         guard safe.length > 0 else {
             return finish(text: text, selection: NSRange(location: safe.location, length: 0), mode: .normal)
         }
-        register = ns.substring(with: safe)
+        register = registerOverride ?? ns.substring(with: safe)
         registerIsLinewise = linewise
         let updated = ns.replacingCharacters(in: safe, with: "")
         let caret = min(safe.location, (updated as NSString).length)
@@ -695,17 +776,30 @@ struct VimEngine {
             return finish(text: text, selection: selection, mode: .normal)
         }
         let ns = text as NSString
-        let payload = String(repeating: register, count: max(1, count))
-        let location: Int
+
         if registerIsLinewise {
-            if after {
-                location = NSMaxRange(lineRange(selection.location, in: ns))
-            } else {
-                location = lineStart(selection.location, in: ns)
-            }
-        } else {
-            location = after ? min(selection.location + 1, ns.length) : min(selection.location, ns.length)
+            // Linewise registers keep a trailing newline; pasting at the very end of a
+            // buffer that has none must add the separator instead of gluing the pasted
+            // line onto the current one (`ab\ncd` + `yyp` on the last line).
+            var chunk = String(repeating: register, count: max(1, count))
+            if !chunk.hasSuffix("\n") { chunk += "\n" }
+            let insertAt = after
+                ? NSMaxRange(lineRange(selection.location, in: ns))
+                : lineStart(selection.location, in: ns)
+            let needsSeparator = insertAt >= ns.length && ns.length > 0 && !text.hasSuffix("\n")
+            let trailing = needsSeparator ? String(chunk.dropLast()) : chunk
+            let payload = needsSeparator ? "\n" + trailing : trailing
+            let updated = ns.replacingCharacters(in: NSRange(location: insertAt, length: 0), with: payload)
+            let caret = insertAt + (needsSeparator ? 1 : 0)
+            return finish(
+                text: updated,
+                selection: NSRange(location: min(caret, (updated as NSString).length), length: 0),
+                mode: .normal
+            )
         }
+
+        let payload = String(repeating: register, count: max(1, count))
+        let location = after ? min(selection.location + 1, ns.length) : min(selection.location, ns.length)
         let updated = ns.replacingCharacters(in: NSRange(location: location, length: 0), with: payload)
         let caret = location + max(0, (payload as NSString).length - 1)
         return finish(
@@ -803,13 +897,24 @@ struct VimEngine {
             end = NSMaxRange(next)
             remaining -= 1
         }
-        var start = first.location
-        // Deleting the final line should also consume the newline before it so the
-        // document does not end with a stray blank line.
-        if end >= ns.length, start > 0 {
-            start -= 1
-        }
-        return NSRange(location: start, length: end - start)
+        // A linewise register always ends with "\n"; the trailing newline is added by
+        // the caller when the buffer does not provide one.
+        return NSRange(location: first.location, length: end - first.location)
+    }
+
+    /// Range to delete for a linewise `dd`. When the target includes the last line of a
+    /// buffer that has no final newline, the preceding newline is consumed instead so the
+    /// document does not end with a stray blank line.
+    private func linewiseDeleteRange(_ range: NSRange, in ns: NSString) -> NSRange {
+        let end = NSMaxRange(range)
+        guard end >= ns.length, range.location > 0 else { return range }
+        return NSRange(location: range.location - 1, length: end - range.location + 1)
+    }
+
+    /// Linewise register contents: the yanked lines plus a trailing newline.
+    private func linewiseRegister(for range: NSRange, in ns: NSString) -> String {
+        let text = ns.substring(with: clampedRange(range, in: ns))
+        return text.hasSuffix("\n") ? text : text + "\n"
     }
 
     private func documentEnd(in ns: NSString) -> Int {
@@ -831,9 +936,26 @@ struct VimEngine {
     }
 
     private func clampedRange(_ range: NSRange, in ns: NSString) -> NSRange {
-        let location = min(max(0, range.location), ns.length)
-        let length = min(max(0, range.length), ns.length - location)
+        var location = min(max(0, range.location), ns.length)
+        var length = min(max(0, range.length), ns.length - location)
+        // Snap both edges to composed-character boundaries so an emoji or an
+        // accented grapheme is never cut in half (which would leave a lone
+        // surrogate behind and turn into U+FFFD on save).
+        location = characterBoundary(atOrBefore: location, in: ns)
+        let end = characterBoundary(atOrBefore: location + length, in: ns)
+        length = max(0, end - location)
         return NSRange(location: location, length: length)
+    }
+
+    /// Returns `index` moved back to the start of the composed character that
+    /// contains it (an `index` already on a boundary is returned unchanged).
+    private func characterBoundary(atOrBefore index: Int, in ns: NSString) -> Int {
+        guard index > 0, index < ns.length else {
+            return min(max(0, index), ns.length)
+        }
+        let range = ns.rangeOfComposedCharacterSequence(at: index)
+        if range.location == index { return index }
+        return range.location
     }
 
     private func isWhitespace(_ character: unichar) -> Bool {

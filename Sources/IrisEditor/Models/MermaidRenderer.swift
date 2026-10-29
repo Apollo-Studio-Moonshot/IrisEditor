@@ -32,6 +32,69 @@ enum MermaidParser {
 
     // MARK: - Public API
 
+    /// Buckets nodes into layout rows (level 0 is the top / left row).
+    ///
+    /// Cycle-safe by construction: the BFS that seeds the levels touches each node at
+    /// most once, and the longest-path relaxation that follows runs for a bounded number
+    /// of rounds and refuses to push a level past `nodes.count`. A graph such as
+    /// `A --> B; B --> A` therefore lays out in finite time instead of hanging the caller.
+    static func levelGroups(_ chart: Flowchart) -> [Int: [String]] {
+        var adjacency: [String: [String]] = [:]
+        var indegree: [String: Int] = [:]
+        for node in chart.nodes {
+            adjacency[node.id] = []
+            indegree[node.id] = 0
+        }
+        for edge in chart.edges {
+            adjacency[edge.from, default: []].append(edge.to)
+            indegree[edge.to, default: 0] += 1
+        }
+
+        var level: [String: Int] = [:]
+        var queue: [String] = chart.nodes.filter { (indegree[$0.id] ?? 0) == 0 }.map(\.id)
+        if queue.isEmpty, let first = chart.nodes.first {
+            queue = [first.id]
+        }
+        for id in queue { level[id] = 0 }
+
+        var cursor = 0
+        while cursor < queue.count {
+            let current = queue[cursor]
+            cursor += 1
+            for next in adjacency[current] ?? [] where level[next] == nil {
+                level[next] = (level[current] ?? 0) + 1
+                queue.append(next)
+            }
+        }
+
+        // Prefer the longest path so join nodes sit below all of their parents. Bounded
+        // rounds keep this terminating even when the graph contains a cycle.
+        if !chart.edges.isEmpty {
+            let rounds = max(1, chart.nodes.count)
+            for _ in 0..<rounds {
+                var changed = false
+                for edge in chart.edges {
+                    let candidate = (level[edge.from] ?? 0) + 1
+                    if candidate > (level[edge.to] ?? 0), candidate < chart.nodes.count {
+                        level[edge.to] = candidate
+                        changed = true
+                    }
+                }
+                if !changed { break }
+            }
+        }
+
+        for node in chart.nodes where level[node.id] == nil {
+            level[node.id] = 0
+        }
+
+        var grouped: [Int: [String]] = [:]
+        for node in chart.nodes {
+            grouped[level[node.id] ?? 0, default: []].append(node.id)
+        }
+        return grouped
+    }
+
     static func flowchart(_ source: String) -> Flowchart? {
         let lines = source.split(separator: "\n", omittingEmptySubsequences: true)
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -152,7 +215,7 @@ enum MermaidParser {
         let rowGap: CGFloat = 58
         let padding: CGFloat = 22
 
-        let levels = computeLevels(chart)
+        let levels = levelGroups(chart)
         let maxPerLevel = levels.values.map(\.count).max() ?? 1
         let levelCount = max(1, (levels.keys.max() ?? 0) + 1)
         let isHorizontal = chart.direction == .leftRight
@@ -246,38 +309,6 @@ enum MermaidParser {
             return id
         }
         return nil
-    }
-
-    private static func computeLevels(_ chart: Flowchart) -> [Int: [String]] {
-        var adjacency: [String: [String]] = [:]
-        var indegree: [String: Int] = [:]
-        for node in chart.nodes {
-            adjacency[node.id] = []
-            indegree[node.id] = 0
-        }
-        for edge in chart.edges {
-            adjacency[edge.from, default: []].append(edge.to)
-            indegree[edge.to, default: 0] += 1
-        }
-        var level: [String: Int] = [:]
-        var queue: [String] = chart.nodes.filter { (indegree[$0.id] ?? 0) == 0 }.map(\.id)
-        if queue.isEmpty, let first = chart.nodes.first { queue = [first.id] }
-        for id in queue { level[id] = 0 }
-        var cursor = 0
-        while cursor < queue.count {
-            let current = queue[cursor]; cursor += 1
-            for next in adjacency[current] ?? [] {
-                let candidate = (level[current] ?? 0) + 1
-                if candidate > (level[next] ?? -1) {
-                    level[next] = candidate
-                    queue.append(next)
-                }
-            }
-        }
-        for node in chart.nodes where level[node.id] == nil { level[node.id] = 0 }
-        var grouped: [Int: [String]] = [:]
-        for node in chart.nodes { grouped[level[node.id] ?? 0, default: []].append(node.id) }
-        return grouped
     }
 
     private static func xmlEscape(_ s: String) -> String {

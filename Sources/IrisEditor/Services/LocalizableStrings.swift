@@ -205,7 +205,14 @@ enum L10n {
     static let clearSearch = NSLocalizedString("Clear search", comment: "Accessibility label for the search field clear button")
     static let closeVersionHistory = NSLocalizedString("Close version history", comment: "Accessibility label for the version history close button")
     static let searchAllNotesPlaceholder = NSLocalizedString("Search all notes…", comment: "Placeholder in the vault search field")
-    static let searchVaultHint = NSLocalizedString("Search note titles and contents across your vault.", comment: "Vault search empty-state hint")
+    static let searchVaultHint = NSLocalizedString(
+        "Search note titles and contents across your vault. Operators: tag:#idea · path:daily · file:meeting · match-case: · -tag:archive",
+        comment: "Vault search empty-state hint, including the supported query operators"
+    )
+    static let searchOperatorsHint = NSLocalizedString(
+        "tag: file: path: match-case: -exclusion",
+        comment: "Compact reminder of the vault search operators, shown under the search field"
+    )
     static let versionHistoryTitle = NSLocalizedString("Version History", comment: "Version history panel title")
     static let versionsHint = NSLocalizedString("Versions are captured each time you save this document.", comment: "Version history empty-state hint")
     static let selectVersionHint = NSLocalizedString("Select a version to preview.", comment: "Version history preview placeholder")

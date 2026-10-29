@@ -200,24 +200,25 @@ enum MarkdownHighlighter {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             // Fenced code blocks: ``` or ~~~
-            if let fence = leadingFenceMarker(in: trimmed) {
-                if !inFence {
-                    inFence = true
-                    fenceMarker = fence
-                    fenceStart = lineRange.location
-                } else if fence == fenceMarker {
-                    if fenceStart != NSNotFound {
-                        result.append(Highlight(
-                            nsRange: NSRange(location: fenceStart, length: NSMaxRange(lineRange) - fenceStart),
-                            token: .fencedCode
-                        ))
-                    }
-                    inFence = false
-                    fenceMarker = ""
-                    fenceStart = NSNotFound
+            let fence = leadingFenceMarker(in: trimmed)
+            if inFence, fence == fenceMarker {
+                if fenceStart != NSNotFound {
+                    result.append(Highlight(
+                        nsRange: NSRange(location: fenceStart, length: NSMaxRange(lineRange) - fenceStart),
+                        token: .fencedCode
+                    ))
                 }
+                inFence = false
+                fenceMarker = ""
+                fenceStart = NSNotFound
             } else if inFence {
+                // Any other line inside a fence — including a different fence
+                // marker such as ``` within a ~~~ block — is code.
                 result.append(Highlight(nsRange: lineRange, token: .fencedCode))
+            } else if let fence {
+                inFence = true
+                fenceMarker = fence
+                fenceStart = lineRange.location
             } else if !trimmed.isEmpty {
                 scanBlockLine(line, lineRange: lineRange, into: &result)
             }
@@ -439,36 +440,47 @@ enum MarkdownHighlighter {
     }
 
     private static func scanLinks(_ ns: NSString, contentRange: NSRange, base: Int, into result: inout [Highlight]) {
-        let substring = ns.substring(with: contentRange)
-        var searchStart = substring.startIndex
+        // Work in UTF-16 offsets: highlight ranges are applied to an `NSTextStorage`,
+        // so counting `Character`s here drifts as soon as the line holds a non-BMP
+        // scalar (emoji, CJK extension B, …).
+        let content = ns.substring(with: contentRange) as NSString
+        let contentEnd = content.length
+        var searchStart = 0
 
-        while let openBracket = substring[searchStart...].firstIndex(of: "[") {
-            guard let closeBracket = substring[openBracket...].firstIndex(of: "]") else { break }
-            let afterClose = substring.index(after: closeBracket)
-            guard afterClose < substring.endIndex, substring[afterClose] == "(" else {
-                searchStart = substring.index(after: openBracket)
+        while searchStart < contentEnd {
+            let openBracket = content.range(of: "[", options: [], range: NSRange(location: searchStart, length: contentEnd - searchStart))
+            guard openBracket.location != NSNotFound else { break }
+            let bracketSearch = NSRange(location: openBracket.location + 1, length: contentEnd - openBracket.location - 1)
+            let closeBracket = content.range(of: "]", options: [], range: bracketSearch)
+            guard closeBracket.location != NSNotFound else { break }
+            let afterClose = NSMaxRange(closeBracket)
+            guard afterClose < contentEnd, content.character(at: afterClose) == UInt16(UnicodeScalar("(").value) else {
+                searchStart = openBracket.location + 1
                 continue
             }
-            guard let closeParen = substring[afterClose...].firstIndex(of: ")") else { break }
+            let parenSearch = NSRange(location: afterClose + 1, length: contentEnd - afterClose - 1)
+            let closeParen = content.range(of: ")", options: [], range: parenSearch)
+            guard closeParen.location != NSNotFound else { break }
 
-            let labelRange = substring.index(after: openBracket)..<closeBracket
-            let urlRange = substring.index(after: afterClose)..<closeParen
+            let labelStart = openBracket.location + 1
+            let labelLength = closeBracket.location - labelStart
+            let urlStart = afterClose + 1
+            let urlLength = closeParen.location - urlStart
 
-            let labelOffset = substring.distance(from: substring.startIndex, to: labelRange.lowerBound)
-            let labelLength = substring.distance(from: labelRange.lowerBound, to: labelRange.upperBound)
-            let urlOffset = substring.distance(from: substring.startIndex, to: urlRange.lowerBound)
-            let urlLength = substring.distance(from: urlRange.lowerBound, to: urlRange.upperBound)
+            if labelLength > 0 {
+                result.append(Highlight(
+                    nsRange: NSRange(location: base + contentRange.location + labelStart, length: labelLength),
+                    token: .link
+                ))
+            }
+            if urlLength > 0 {
+                result.append(Highlight(
+                    nsRange: NSRange(location: base + contentRange.location + urlStart, length: urlLength),
+                    token: .link
+                ))
+            }
 
-            result.append(Highlight(
-                nsRange: NSRange(location: base + contentRange.location + labelOffset, length: labelLength),
-                token: .link
-            ))
-            result.append(Highlight(
-                nsRange: NSRange(location: base + contentRange.location + urlOffset, length: urlLength),
-                token: .link
-            ))
-
-            searchStart = substring.index(after: closeParen)
+            searchStart = NSMaxRange(closeParen)
         }
     }
 }

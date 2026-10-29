@@ -21,7 +21,12 @@ Electron, no dependencies, and no project bloat.
   indented/fenced code, rules, inline/reference/autolink links, images (local and remote),
   escaping, inline HTML, HTML blocks (tables in HTML markup render as real tables), pipe
   **tables**, and nesting anywhere — cycling
-  through *source → split → preview* from the toolbar or `⌥⌘P`
+  through *source → split → preview* from the toolbar or `⌥⌘P`. Obsidian syntax is
+  covered too: `==highlight==` renders with a theme-aware backing colour, and
+  **callouts** (`> [!note]`, `tip`, `warning`, `danger`, `bug`, `quote`, … with every
+  Obsidian alias) render as tinted icon cards that fold when written `> [!note]-`.
+  Preview parsing is debounced and cached, so typing in a long note no longer re-parses
+  the whole document on every keystroke
 - **Editor tabs** — multiple documents open as tabs in one window: `⌘T` opens a new tab,
   `⌘W` closes the current tab (prompting to save; the last tab closes the window),
   `⇧⌘[` / `⇧⌘]` cycle tabs, and
@@ -46,6 +51,9 @@ Electron, no dependencies, and no project bloat.
 - **Wiki links** — `[[Note]]`, `[[Note|Alias]]`, and `[[Note#Heading]]` links are highlighted
   in the editor and clickable in the preview; links resolve to open tabs, recent files, or
   notes beside the current document, and missing notes are created on demand
+- **Vault search operators** — the full-vault search field (`⇧⌘F`) understands
+  `tag:#idea`, `path:daily`, `file:meeting`, `match-case:`, quoted values, and `-` exclusions,
+  so a filter-only query like `tag:project -path:archive` lists matching notes
 - **Recent files and drag-and-drop** — File ▸ Open Recent, plus dropping `.md` files on the
   window opens them as tabs
 - **Seamless saves** — dirty documents with a file URL auto-save two seconds after typing

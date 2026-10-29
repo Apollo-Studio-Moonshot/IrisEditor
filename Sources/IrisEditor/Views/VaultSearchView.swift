@@ -44,7 +44,16 @@ struct VaultSearchView: View {
                     }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+
+            // Obsidian-style operators are only discoverable if they are on screen.
+            Text(L10n.searchOperatorsHint)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
+                .accessibilityIdentifier("VaultSearch.OperatorHint")
 
             Divider()
 

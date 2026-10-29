@@ -61,7 +61,8 @@ struct VimEngineTests {
         #expect(yanked.text == text)
 
         let pasted = press("p", on: &engine, text: text, selection: NSRange(location: 0, length: 0))
-        #expect(pasted.text == "abcabc")
+        // A linewise paste opens a new line instead of gluing onto the last one.
+        #expect(pasted.text == "abc\nabc", "text=\(pasted.text.debugDescription)")
     }
 
     @Test func visualSelectionDeletes() {

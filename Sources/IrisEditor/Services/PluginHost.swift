@@ -109,6 +109,9 @@ final class PluginHost {
     private var commandHandlers: [String: JSValue] = [:]
     private var exporterHandlers: [String: JSValue] = [:]
 
+    /// Ids claimed by the plugins loaded in this pass, used to keep equal manifest ids apart.
+    private var loadedIDs: Set<String> = []
+
     private(set) var lastError: String?
 
     init() {}
@@ -145,6 +148,7 @@ final class PluginHost {
         contexts.removeAll()
         commandHandlers.removeAll()
         exporterHandlers.removeAll()
+        loadedIDs.removeAll()
         lastError = nil
 
         var plugins: [InstalledPlugin] = []
@@ -191,7 +195,9 @@ final class PluginHost {
             context.setText(value ?? "")
         }
         let setSelection: @convention(block) (Double, Double) -> Void = { location, length in
-            context.setSelection(Int(location), Int(length))
+            // JavaScript can hand us NaN, ±Infinity, or a value outside Int's range;
+            // `Int(_:)` traps on all of those and would take the whole app down.
+            context.setSelection(Self.safeOffset(location), Self.safeOffset(length))
         }
         let save: @convention(block) () -> Void = {
             context.save()
@@ -245,7 +251,25 @@ final class PluginHost {
 
         let result = handler.call(withArguments: [document])
         captureException(from: js)
-        return result?.toString()
+        guard let result, !result.isUndefined, !result.isNull else {
+            if lastError == nil { lastError = "The plugin exporter returned no output." }
+            return nil
+        }
+        guard let html = result.toString(), !html.isEmpty else {
+            if lastError == nil { lastError = "The plugin exporter returned no output." }
+            return nil
+        }
+        return html
+    }
+
+    /// Converts a JS number to a safe `Int`, clamping non-finite and out-of-range values
+    /// instead of trapping.
+    static func safeOffset(_ value: Double) -> Int {
+        guard value.isFinite else { return 0 }
+        let rounded = value.rounded(.towardZero)
+        if rounded >= Double(Int.max) { return Int.max }
+        if rounded <= Double(Int.min) { return Int.min }
+        return Int(rounded)
     }
 
     /// Writes a small documented example plugin into the user's plugin folder.
@@ -369,7 +393,14 @@ final class PluginHost {
             }
         }
 
-        let pluginID = Self.sanitizedID(manifest?.id ?? fallbackID)
+        // Two plugins may declare the same manifest id (or the same folder name in
+        // different roots). Folding them into one id would let one plugin's menu entry run
+        // the other's code, so the id is disambiguated with a short hash of its path.
+        var pluginID = Self.sanitizedID(manifest?.id ?? fallbackID)
+        if loadedIDs.contains(pluginID) {
+            pluginID += "-" + Self.pathFingerprint(for: url)
+        }
+        loadedIDs.insert(pluginID)
         let name = manifest?.name?.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayName = (name?.isEmpty == false ? name! : fallbackID)
         let version = manifest?.version ?? "1.0"
@@ -517,6 +548,16 @@ final class PluginHost {
     }
 
     // MARK: - Naming
+
+    /// Short stable fingerprint of a plugin's location, used to disambiguate equal ids.
+    nonisolated static func pathFingerprint(for url: URL) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in url.standardizedFileURL.path.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(hash % 0xfffff, radix: 16)
+    }
 
     nonisolated static func sanitizedID(_ raw: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))

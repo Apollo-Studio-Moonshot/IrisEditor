@@ -409,24 +409,42 @@ enum VaultScanner {
 
     /// Case-insensitive substring search, one result per matching line.
     static func search(_ query: String, in files: [VaultFile], limit: Int = 60) -> [VaultSearchResult] {
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty, limit > 0 else { return [] }
+        let parsed = VaultQuery.parse(query)
+        guard !parsed.isEmpty, limit > 0 else { return [] }
 
         var results: [VaultSearchResult] = []
         for file in files {
             guard results.count < limit else { break }
+            guard parsed.matchesFile(file) else { continue }
             guard !isTooLarge(file.url) else { continue }
             guard let text = readText(file.url), !text.contains("\0") else { continue }
+            guard parsed.matchesMetadata(of: text) else { continue }
 
+            // A filter-only query (`tag:idea`) lists the whole note rather than every
+            // matching line, which is what Obsidian does.
+            guard !parsed.text.isEmpty else {
+                let firstLine = normalizedLines(text).first ?? ""
+                results.append(
+                    VaultSearchResult(
+                        url: file.url,
+                        title: file.title,
+                        line: 1,
+                        excerpt: String(firstLine.prefix(160))
+                    )
+                )
+                continue
+            }
+
+            let options: String.CompareOptions = parsed.matchCase ? [] : [.caseInsensitive]
             for (index, line) in normalizedLines(text).enumerated() {
                 guard results.count < limit else { break }
-                guard line.range(of: needle, options: [.caseInsensitive]) != nil else { continue }
+                guard line.range(of: parsed.text, options: options) != nil else { continue }
                 results.append(
                     VaultSearchResult(
                         url: file.url,
                         title: file.title,
                         line: index + 1,
-                        excerpt: centeredExcerpt(line, needle: needle, limit: 160)
+                        excerpt: centeredExcerpt(line, needle: parsed.text, limit: 160)
                     )
                 )
             }
@@ -728,4 +746,123 @@ private enum Patterns {
     // NSRegularExpression instances are immutable and safe to share across threads.
     static let wikiLink = try? NSRegularExpression(pattern: #"\[\[([^\[\]]+)\]\]"#)
     static let tag = try? NSRegularExpression(pattern: #"(?:^|(?<=\s))#([\p{L}\p{N}_\-/]+)"#)
+}
+
+
+/// A parsed vault search query with Obsidian-style operators.
+///
+/// Supported: `tag:name` (any depth, `tag:#a/b` and `-tag:` work), `path:fragment`,
+/// `file:fragment`, `match-case:` / `ignore-case:`, and quoted values (`tag:"needs review"`).
+/// Everything else is the free-text needle, which is matched case-insensitively by default.
+struct VaultQuery: Equatable {
+    var text: String = ""
+    var tags: [String] = []
+    var excludedTags: [String] = []
+    var pathFragments: [String] = []
+    var excludedPathFragments: [String] = []
+    var nameFragments: [String] = []
+    var excludedNameFragments: [String] = []
+    var matchCase: Bool = false
+
+    var isEmpty: Bool {
+        text.isEmpty && tags.isEmpty && excludedTags.isEmpty && pathFragments.isEmpty
+            && excludedPathFragments.isEmpty && nameFragments.isEmpty
+            && excludedNameFragments.isEmpty
+    }
+
+    static func parse(_ raw: String) -> VaultQuery {
+        var query = VaultQuery()
+        var pending: [String] = []
+
+        for token in tokenize(raw) {
+            var body = token
+            var isNegated = false
+            if body.hasPrefix("-") {
+                isNegated = true
+                body.removeFirst()
+            }
+            guard let colon = body.firstIndex(of: ":") else {
+                pending.append(isNegated ? "-" + body : body)
+                continue
+            }
+            let key = body[body.startIndex..<colon].lowercased()
+            let rawValue = String(body[body.index(after: colon)...])
+                .trimmingCharacters(in: .whitespaces)
+            let value = rawValue.hasPrefix("#") ? String(rawValue.dropFirst()) : rawValue
+
+            switch key {
+            case "tag":
+                guard !value.isEmpty else { break }
+                if isNegated { query.excludedTags.append(value.lowercased()) }
+                else { query.tags.append(value.lowercased()) }
+            case "path":
+                guard !value.isEmpty else { break }
+                if isNegated { query.excludedPathFragments.append(value.lowercased()) }
+                else { query.pathFragments.append(value.lowercased()) }
+            case "file", "filename":
+                guard !value.isEmpty else { break }
+                if isNegated { query.excludedNameFragments.append(value.lowercased()) }
+                else { query.nameFragments.append(value.lowercased()) }
+            case "match-case":
+                query.matchCase = true
+            case "ignore-case":
+                query.matchCase = false
+            default:
+                // Not an operator: keep it as text so `time: 10` still searches.
+                pending.append(isNegated ? "-" + body : body)
+            }
+        }
+
+        query.text = pending.joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return query
+    }
+
+    /// Splits on whitespace while keeping `"quoted values"` together.
+    private static func tokenize(_ raw: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var inQuotes = false
+        for character in raw {
+            if character == "\"" {
+                inQuotes.toggle()
+                continue
+            }
+            if character.isWhitespace, !inQuotes {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current = ""
+                }
+                continue
+            }
+            current.append(character)
+        }
+        if !current.isEmpty { tokens.append(current) }
+        return tokens
+    }
+
+    /// File-level filters: path, name, and tags that appear anywhere in the note.
+    func matchesFile(_ file: VaultFile) -> Bool {
+        let path = file.relativePath.lowercased()
+        let name = file.title.lowercased()
+
+        for fragment in pathFragments where !path.contains(fragment) { return false }
+        for fragment in excludedPathFragments where path.contains(fragment) { return false }
+        for fragment in nameFragments where !name.contains(fragment) { return false }
+        for fragment in excludedNameFragments where name.contains(fragment) { return false }
+        return true
+    }
+
+    /// Tag filters need the file's text, so they run after it has been read.
+    func matchesMetadata(of text: String) -> Bool {
+        guard !tags.isEmpty || !excludedTags.isEmpty else { return true }
+        let present = Set(VaultScanner.tags(inText: text).map { $0.lowercased() })
+        for tag in tags where !present.contains(where: { $0 == tag || $0.hasPrefix(tag + "/") }) {
+            return false
+        }
+        for tag in excludedTags where present.contains(where: { $0 == tag || $0.hasPrefix(tag + "/") }) {
+            return false
+        }
+        return true
+    }
 }

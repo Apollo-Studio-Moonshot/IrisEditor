@@ -20,7 +20,18 @@ enum MarkdownOutline {
         let normalized = text
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
-        let lines = normalized.components(separatedBy: "\n")
+
+        // A YAML frontmatter block must never be read as content: its `---` fence and
+        // `title: …` line would otherwise look like a Setext heading. Line numbers stay
+        // document-relative so outline navigation still jumps to the right place.
+        var lineOffset = 0
+        var body = normalized
+        if let frontmatter = MarkdownFrontmatterParser.parse(normalized) {
+            lineOffset = frontmatter.lineCount
+            body = frontmatter.body
+        }
+
+        let lines = body.components(separatedBy: "\n")
 
         var headings: [Heading] = []
         var fenceMarker: Character?
@@ -29,6 +40,7 @@ enum MarkdownOutline {
         while index < lines.count {
             let line = lines[index]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let lineNumber = lineOffset + index + 1
 
             if let marker = fenceMarker {
                 if isFence(trimmed, marker: marker) {
@@ -44,7 +56,7 @@ enum MarkdownOutline {
                 continue
             }
 
-            if let heading = atxHeading(in: line, lineNumber: index + 1) {
+            if let heading = atxHeading(in: line, lineNumber: lineNumber) {
                 headings.append(heading)
                 index += 1
                 continue
@@ -57,7 +69,7 @@ enum MarkdownOutline {
                let level = setextLevel(for: lines[index + 1]) {
                 let title = visibleTitle(from: trimmed)
                 if !title.isEmpty {
-                    headings.append(Heading(level: level, title: title, line: index + 1))
+                    headings.append(Heading(level: level, title: title, line: lineNumber))
                 }
                 index += 2
                 continue
