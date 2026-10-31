@@ -6,8 +6,6 @@ struct IrisEditorApp: App {
     @StateObject private var appState = AppState.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
-    @Environment(\.openWindow) private var openWindow
-
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -32,7 +30,11 @@ struct IrisEditorApp: App {
 
             CommandGroup(after: .newItem) {
                 Button(L10n.closeTabMenu) {
-                    appState.closeTab(at: appState.currentTabIndex)
+                    if appState.isGraphTabActive {
+                        appState.closeGraphTab()
+                    } else {
+                        appState.closeTab(at: appState.currentTabIndex)
+                    }
                 }
                 .irisKeyboardShortcut(appState.keyboardShortcut(for: .closeTab))
 
@@ -67,17 +69,16 @@ struct IrisEditorApp: App {
                 Divider()
 
                 Button(L10n.nextTab) {
-                    appState.selectTab(at: (appState.currentTabIndex + 1) % appState.tabs.count)
+                    appState.selectNextTab()
                 }
                 .irisKeyboardShortcut(appState.keyboardShortcut(for: .nextTab))
-                .disabled(appState.tabs.count < 2)
+                .disabled(appState.tabs.count + (appState.isGraphTabOpen ? 1 : 0) < 2)
 
                 Button(L10n.previousTab) {
-                    let count = appState.tabs.count
-                    appState.selectTab(at: (appState.currentTabIndex - 1 + count) % count)
+                    appState.selectPreviousTab()
                 }
                 .irisKeyboardShortcut(appState.keyboardShortcut(for: .previousTab))
-                .disabled(appState.tabs.count < 2)
+                .disabled(appState.tabs.count + (appState.isGraphTabOpen ? 1 : 0) < 2)
 
                 Divider()
 
@@ -339,7 +340,7 @@ struct IrisEditorApp: App {
                 .irisKeyboardShortcut(appState.keyboardShortcut(for: .toggleStar))
 
                 Button(L10n.openGraphWindow) {
-                    openWindow(id: AppWindows.graph)
+                    appState.openGraphTab()
                 }
                 .irisKeyboardShortcut(appState.keyboardShortcut(for: .openGraphWindow))
 
@@ -388,16 +389,6 @@ struct IrisEditorApp: App {
                 .disabled(appState.secondDocument != nil)
             }
         }
-
-        // Standalone graph explorer (⇧⌘G): a separate, resizable window so the
-        // vault graph can be studied without squeezing it into the sidebar.
-        Window(L10n.vaultGraph + " Graph", id: AppWindows.graph) {
-            GraphWindowView()
-                .environmentObject(appState)
-        }
-        .defaultSize(width: 980, height: 680)
-        .windowToolbarStyle(.unified)
-        .windowResizability(.contentMinSize)
 
         Settings {
             SettingsView()

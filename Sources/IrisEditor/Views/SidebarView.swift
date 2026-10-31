@@ -5,7 +5,6 @@ import SwiftUI
 /// and a graph mini-map, plus a persistent note filter shared by every pane.
 struct SidebarView: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.openWindow) private var openWindow
 
     /// Editor content width. Zero until the first layout pass; resizing is capped at
     /// half of it so the editor always keeps usable room, even in a narrow window.
@@ -139,7 +138,7 @@ struct SidebarView: View {
                 label: L10n.graphWindowHelp,
                 identifier: "Sidebar.OpenGraphWindow"
             ) {
-                openWindow(id: AppWindows.graph)
+                appState.openGraphTab()
             }
             .accessibilityLabel(L10n.openGraphWindow)
 
@@ -1341,7 +1340,6 @@ private struct BacklinkRow: View {
 
 private struct VaultGraphPane: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.openWindow) private var openWindow
     @State private var selectedNodeID: String?
 
     var body: some View {
@@ -1392,7 +1390,7 @@ private struct VaultGraphPane: View {
                     .foregroundStyle(.quaternary)
                     Spacer(minLength: 0)
                     Button {
-                        openWindow(id: AppWindows.graph)
+                        appState.openGraphTab()
                     } label: {
                         Image(systemName: "arrow.up.forward.app")
                             .font(.system(size: 9.5))

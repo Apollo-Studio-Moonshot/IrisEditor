@@ -71,7 +71,7 @@ enum KeybindingCommand: String, CaseIterable, Identifiable {
         case .vaultSearch: return "Search All Notes…"
         case .dailyNote: return "Daily Note"
         case .toggleStar: return "Star Note"
-        case .openGraphWindow: return "Open Graph Window"
+        case .openGraphWindow: return "Open Graph View"
         }
     }
 

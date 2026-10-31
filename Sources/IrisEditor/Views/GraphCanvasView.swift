@@ -28,6 +28,14 @@ struct GraphCanvasView: View {
     /// Called when a node is double-clicked, with the node id (a note path).
     var onOpenNode: ((String) -> Void)?
 
+    /// Physics driving the layout; the sidebar mini-map uses the defaults while the
+    /// graph tab exposes Obsidian-style sliders.
+    var forces: GraphForces = GraphForces()
+
+    /// Obsidian-style immersive rendering: dark depth-gradient backdrop, glowing
+    /// nodes and hover dimming. The sidebar mini-map keeps the standard look.
+    var immersive: Bool = false
+
     @StateObject private var store = GraphCanvasStore()
     @State private var hoveredNodeID: String?
     @State private var draggingNodeID: String?
@@ -36,9 +44,9 @@ struct GraphCanvasView: View {
     var body: some View {
         GeometryReader { proxy in
             // Measuring happens here so `canvas(in:)` stays pure; the store no-ops
-            // when the graph and size are unchanged.
+            // when the graph, size and forces are unchanged.
             let size = proxy.size
-            let _ = store.relayout(graph, in: size)
+            let _ = store.relayout(graph, in: size, forces: forces)
             canvas(in: size, layout: store.layout)
         }
         .accessibilityElement(children: .contain)
@@ -55,6 +63,9 @@ struct GraphCanvasView: View {
         .frame(width: size.width, height: size.height)
         .contentShape(Rectangle())
         .background {
+            if immersive {
+                immersiveBackdrop
+            }
             if interactive {
                 // AppKit receives scroll-wheel events before SwiftUI, so a tiny
                 // monitor view gives us cursor-anchored scroll-to-zoom.
@@ -76,27 +87,49 @@ struct GraphCanvasView: View {
         }
     }
 
+    /// Obsidian-style depth backdrop: a soft radial well that keeps the eye centred.
+    private var immersiveBackdrop: some View {
+        ZStack {
+            Color(nsColor: .black)
+            RadialGradient(
+                colors: [
+                    Color.accentColor.opacity(0.09),
+                    Color(nsColor: .black).opacity(0)
+                ],
+                center: .center,
+                startRadius: 0,
+                endRadius: 520
+            )
+        }
+        .ignoresSafeArea()
+    }
+
     // MARK: Layers
 
     private func edgesLayer(layout: GraphLayout, transform: CGAffineTransform) -> some View {
-        Canvas { context, _ in
+        // Hovering behaves like selecting: the neighbourhood stays lit, the rest fades.
+        let focusID = hoveredNodeID ?? selectedNodeID
+        return Canvas { context, _ in
             for edge in layout.edges {
                 var path = Path()
                 path.move(to: edge.from.applying(transform))
                 path.addLine(to: edge.to.applying(transform))
 
-                let touchesSelection = selectedNodeID != nil
-                    && (edge.endpoints.0 == selectedNodeID || edge.endpoints.1 == selectedNodeID)
-                let dimmed = selectedNodeID != nil && !touchesSelection
-                let color: Color = if touchesSelection || edge.isHighlighted {
-                    Color.accentColor.opacity(dimmed ? 0.3 : 0.9)
+                let touchesFocus = focusID != nil
+                    && (edge.endpoints.0 == focusID || edge.endpoints.1 == focusID)
+                let dimmed = focusID != nil && !touchesFocus
+                let color: Color
+                if touchesFocus || (focusID == nil && edge.isHighlighted) {
+                    color = Color.accentColor.opacity(dimmed ? 0.3 : 0.9)
+                } else if immersive {
+                    color = Color.white.opacity(dimmed ? 0.04 : 0.16)
                 } else {
-                    Color.primary.opacity(dimmed ? 0.08 : 0.2)
+                    color = Color.primary.opacity(dimmed ? 0.08 : 0.2)
                 }
                 context.stroke(
                     path,
                     with: .color(color),
-                    lineWidth: (touchesSelection ? 1.6 : 1) * min(1.6, max(0.6, transform.a))
+                    lineWidth: (touchesFocus ? 1.6 : 1) * min(1.6, max(0.6, transform.a))
                 )
             }
         }
@@ -118,9 +151,11 @@ struct GraphCanvasView: View {
     ) -> some View {
         let selected = selectedNodeID == node.id
         let hovered = hoveredNodeID == node.id
-        let neighbours = selectedNodeID.map { layout.neighbours(of: $0, in: graph) } ?? []
+        // Hover previews the neighbourhood the same way a click pins it, like Obsidian.
+        let focusID = hoveredNodeID ?? selectedNodeID
+        let neighbours = focusID.map { layout.neighbours(of: $0, in: graph) } ?? []
         let isNeighbour = neighbours.contains(node.id)
-        let faded = selectedNodeID != nil && !selected && !isNeighbour && !node.isCurrent
+        let faded = focusID != nil && !selected && !hovered && !isNeighbour && !node.isCurrent
         let center = node.position.applying(xform)
         let radius = node.radius * xform.a
         let dragged = store.viewport.offset(for: node.id)
@@ -171,28 +206,26 @@ struct GraphCanvasView: View {
         fontSize: CGFloat,
         showLabel: Bool
     ) -> some View {
-        VStack(spacing: 2) {
+        let fill = fillColor(for: node, selected: selected, hovered: hovered)
+        return VStack(spacing: 2) {
             Circle()
-                .fill(fillColor(for: node, selected: selected, hovered: hovered))
+                .fill(fill)
                 .frame(width: radius * 2, height: radius * 2)
                 .overlay {
                     Circle()
                         .strokeBorder(
-                            Color(nsColor: selected ? .controlAccentColor : .separatorColor)
-                                .opacity(selected ? 1 : 0.7),
+                            ringColor(selected: selected),
                             lineWidth: selected ? 1.6 : 0.8
                         )
                 }
-                // A soft accent halo on hover and a tighter shadow while selected.
-                .shadow(
-                    color: hovered ? Color.accentColor.opacity(0.45) : .black.opacity(selected ? 0.25 : 0),
-                    radius: hovered ? 7 : (selected ? 5 : 0)
-                )
+                // Obsidian-style glow: every node carries a soft halo in its own
+                // colour; hover and selection turn it up.
+                .shadow(color: glowColor(fill, selected: selected, hovered: hovered), radius: glowRadius(selected: selected, hovered: hovered))
 
             if showLabel {
                 Text(node.title)
                     .font(.system(size: fontSize, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? Color.primary : Color.secondary)
+                    .foregroundStyle(labelColor(selected: selected))
                     .lineLimit(1)
                     .fixedSize()
                     .offset(y: 1)
@@ -202,7 +235,45 @@ struct GraphCanvasView: View {
         .contentShape(.rect)
     }
 
+    private func ringColor(selected: Bool) -> Color {
+        if immersive {
+            return Color.white.opacity(selected ? 0.9 : 0.18)
+        }
+        return Color(nsColor: selected ? .controlAccentColor : .separatorColor)
+            .opacity(selected ? 1 : 0.7)
+    }
+
+    private func glowColor(_ fill: Color, selected: Bool, hovered: Bool) -> Color {
+        if immersive {
+            if selected || hovered { return fill.opacity(0.9) }
+            return fill.opacity(0.45)
+        }
+        if hovered { return Color.accentColor.opacity(0.45) }
+        return .black.opacity(selected ? 0.25 : 0)
+    }
+
+    private func glowRadius(selected: Bool, hovered: Bool) -> CGFloat {
+        if immersive {
+            return selected || hovered ? 12 : 5
+        }
+        return hovered ? 7 : (selected ? 5 : 0)
+    }
+
+    private func labelColor(selected: Bool) -> Color {
+        if immersive {
+            return Color.white.opacity(selected ? 1 : 0.72)
+        }
+        return selected ? Color.primary : Color.secondary
+    }
+
     private func fillColor(for node: GraphLayout.Node, selected: Bool, hovered: Bool) -> Color {
+        if immersive {
+            if node.isCurrent { return Color.accentColor }
+            if selected || hovered { return Color.accentColor.opacity(0.92) }
+            if node.linkCount == 0 { return Color.white.opacity(0.22) }
+            // A calm blue-grey close to Obsidian's default node colour.
+            return Color(hue: 0.61, saturation: 0.32, brightness: 0.86).opacity(0.9)
+        }
         if node.isCurrent { return Color.accentColor.opacity(selected ? 0.95 : 0.8) }
         if selected { return Color.accentColor.opacity(0.85) }
         if hovered { return Color.accentColor.opacity(0.7) }
@@ -369,15 +440,16 @@ final class GraphCanvasStore: ObservableObject {
     private struct LayoutKey: Equatable {
         let graph: VaultGraph
         let size: CGSize
+        let forces: GraphForces
     }
 
-    /// Recomputes the force-directed layout when the graph or canvas size changes.
-    /// Safe to call from `body`: it no-ops unless the inputs actually changed.
-    func relayout(_ graph: VaultGraph, in size: CGSize) {
-        let key = LayoutKey(graph: graph, size: size)
+    /// Recomputes the force-directed layout when the graph, canvas size or forces
+    /// change. Safe to call from `body`: it no-ops unless the inputs actually changed.
+    func relayout(_ graph: VaultGraph, in size: CGSize, forces: GraphForces = GraphForces()) {
+        let key = LayoutKey(graph: graph, size: size, forces: forces)
         guard key != layoutKey else { return }
         layoutKey = key
-        layout = GraphLayoutEngine.layout(graph, in: size)
+        layout = GraphLayoutEngine.layout(graph, in: size, forces: forces)
     }
 
     func transform(in size: CGSize) -> CGAffineTransform {

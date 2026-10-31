@@ -3,7 +3,6 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.openWindow) private var openWindow
 
     /// Width of the content area, used to cap the sidebar at half the viewport.
     @State private var viewportWidth: CGFloat = 0
@@ -37,13 +36,15 @@ struct ContentView: View {
                     }
 
                     VStack(spacing: 0) {
-                        if (appState.showFindReplace || appState.showGoToLine) && !appState.isZenMode {
+                        if (appState.showFindReplace || appState.showGoToLine)
+                            && !appState.isZenMode && !appState.isGraphTabActive {
                             FindReplacePanel()
                                 .padding(.top, 10)
                                 .transition(.move(edge: .top).combined(with: .opacity))
                         }
 
-                        if appState.viewMode != .preview && !appState.isZenMode {
+                        if appState.viewMode != .preview && !appState.isZenMode
+                            && !appState.isGraphTabActive {
                             markdownToolbar
                                 .transition(.opacity)
                         }
@@ -84,13 +85,13 @@ struct ContentView: View {
         }
         .background(
             WindowConfigurator(
-                displayName: appState.document.displayName,
-                fileURL: appState.document.fileURL,
-                isDirty: appState.document.isDirty
+                displayName: appState.isGraphTabActive ? L10n.graphTabTitle : appState.document.displayName,
+                fileURL: appState.isGraphTabActive ? nil : appState.document.fileURL,
+                isDirty: appState.isGraphTabActive ? false : appState.document.isDirty
             )
         )
-        .navigationTitle(appState.document.displayName)
-        .navigationSubtitle(appState.document.fileURL?.deletingLastPathComponent().path ?? "")
+        .navigationTitle(appState.isGraphTabActive ? L10n.graphTabTitle : appState.document.displayName)
+        .navigationSubtitle(appState.isGraphTabActive ? "" : (appState.document.fileURL?.deletingLastPathComponent().path ?? ""))
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
@@ -150,7 +151,7 @@ struct ContentView: View {
                 .accessibilityIdentifier("Toolbar.SearchVault")
 
                 Button {
-                    openWindow(id: AppWindows.graph)
+                    appState.openGraphTab()
                 } label: {
                     Label(L10n.openGraphWindow, systemImage: "point.3.connected.trianglepath.dotted")
                 }
@@ -259,6 +260,7 @@ struct ContentView: View {
         .animation(.snappy(duration: 0.2), value: appState.showVersionHistory)
         .animation(.snappy(duration: 0.3), value: appState.isZenMode)
         .animation(.snappy(duration: 0.2), value: appState.showWikiSuggestions)
+        .animation(.snappy(duration: 0.25), value: appState.isGraphTabActive)
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)
             guard !files.isEmpty else { return false }
@@ -348,7 +350,11 @@ struct ContentView: View {
             GlassBackdrop(style: .regular, cornerRadius: 14, interactive: true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if let second = appState.secondDocument {
+            if appState.isGraphTabActive {
+                // The graph workspace fills the card edge to edge, Obsidian-style.
+                GraphTabView()
+                    .transition(.opacity)
+            } else if let second = appState.secondDocument {
                 HSplitView {
                     primaryContent
                         .frame(minWidth: 280)

@@ -129,7 +129,7 @@ public enum GraphLayoutEngine {
         guard count > 1 else {
             let node = graph.nodes[0]
             return GraphLayout(
-                nodes: [makeNode(node, at: center, count: count)],
+                nodes: [makeNode(node, at: center, count: count, scale: forces.nodeScale)],
                 edges: []
             )
         }
@@ -171,7 +171,7 @@ public enum GraphLayoutEngine {
                 var dy = positions[from].y - positions[to].y
                 let distance = hypot(dx, dy)
                 guard distance > 0.01 else { continue }
-                let force = distance * distance / ideal
+                let force = distance * distance / ideal * max(0, Double(forces.linkForce))
                 dx = dx / distance * force
                 dy = dy / distance * force
                 displacements[from].x -= dx
@@ -186,7 +186,7 @@ public enum GraphLayoutEngine {
                 let dy = center.y - positions[index].y
                 let distance = hypot(dx, dy)
                 guard distance > 0.01 else { continue }
-                let force = distance * ideal * 0.045
+                let force = distance * ideal * 0.045 * max(0, Double(forces.centerForce))
                 displacements[index].x += dx / distance * force
                 displacements[index].y += dy / distance * force
             }
@@ -217,7 +217,7 @@ public enum GraphLayoutEngine {
         var nodes: [GraphLayout.Node] = []
         nodes.reserveCapacity(count)
         for (index, node) in graph.nodes.enumerated() {
-            nodes.append(makeNode(node, at: positions[index], count: count))
+            nodes.append(makeNode(node, at: positions[index], count: count, scale: forces.nodeScale))
         }
 
         let layoutEdges = edges.map { pair in
@@ -266,15 +266,16 @@ public enum GraphLayoutEngine {
     private static func makeNode(
         _ node: VaultGraphNode,
         at point: CGPoint,
-        count: Int
+        count: Int,
+        scale: CGFloat = 1
     ) -> GraphLayout.Node {
         // Hubs grow slightly, but never enough to swallow their neighbours.
         let radius: CGFloat
         if node.isCurrent {
-            radius = 9
+            radius = 9 * max(0.2, scale)
         } else {
             let growth = min(3.5, CGFloat(node.linkCount) * 0.55)
-            radius = (count > 80 ? 3.2 : count > 30 ? 4.2 : 5) + growth
+            radius = ((count > 80 ? 3.2 : count > 30 ? 4.2 : 5) + growth) * max(0.2, scale)
         }
         return GraphLayout.Node(
             id: node.id,

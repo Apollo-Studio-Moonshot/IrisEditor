@@ -1,23 +1,29 @@
 import SwiftUI
 
-/// Standalone, resizable graph window (⇧⌘G).
+/// Obsidian-style graph workspace tab.
 ///
-/// The window keeps its own scope, filter and node limit so exploring the vault graph
-/// never disturbs the sidebar mini-map. Selecting a node fills the inspector on the
-/// right; double-clicking (or the inspector's Open button) opens the note in the main
-/// window.
-struct GraphWindowView: View {
+/// The graph lives in the main window's tab strip instead of a separate window, the
+/// way Obsidian does it: an immersive dark canvas fills the tab while a floating
+/// Liquid Glass panel on the left carries the search field, scope picker and the
+/// Display/Forces sliders. Selecting a node lights up its neighbourhood; double-clicking
+/// (or the inspector's Open button) jumps to the note in a document tab while keeping
+/// the graph tab open in the background.
+struct GraphTabView: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.dismissWindow) private var dismissWindow
 
     @AppStorage("IrisEditor.GraphScope") private var scopeRaw = GraphScope.vault.rawValue
     @AppStorage("IrisEditor.GraphShowLabels") private var showsLabels = true
     @AppStorage("IrisEditor.GraphShowOrphans") private var showsOrphans = true
     @AppStorage("IrisEditor.GraphDepth") private var depth = 2
     @AppStorage("IrisEditor.GraphLimit") private var nodeLimit = 250
-    @AppStorage("IrisEditor.GraphInspector") private var showsInspector = true
+    @AppStorage("IrisEditor.GraphInspector") private var showsInspector = false
+    @AppStorage("IrisEditor.GraphPanelCollapsed") private var panelCollapsed = false
+    @AppStorage("IrisEditor.GraphCenterForce") private var centerForce = 1.0
+    @AppStorage("IrisEditor.GraphLinkDistance") private var linkDistance = 1.0
+    @AppStorage("IrisEditor.GraphLinkForce") private var linkForce = 1.0
+    @AppStorage("IrisEditor.GraphNodeSize") private var nodeSize = 1.0
 
-    @StateObject private var model = GraphWindowModel()
+    @StateObject private var model = GraphTabModel()
 
     private var filterText: String { model.filterText }
     private var selectedNodeID: String? { model.selectedNodeID }
@@ -26,6 +32,15 @@ struct GraphWindowView: View {
 
     private var scope: GraphScope {
         GraphScope(rawValue: scopeRaw) ?? .vault
+    }
+
+    private var forces: GraphForces {
+        var value = GraphForces()
+        value.centerForce = CGFloat(centerForce)
+        value.linkDistance = CGFloat(linkDistance)
+        value.linkForce = CGFloat(linkForce)
+        value.nodeScale = CGFloat(nodeSize)
+        return value
     }
 
     private var baseGraph: VaultGraph {
@@ -73,172 +88,27 @@ struct GraphWindowView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            Divider()
-            HSplitView {
-                canvas
-                if showsInspector {
-                    inspector
-                        .frame(minWidth: 210, idealWidth: 250, maxWidth: 340)
-                }
+        ZStack {
+            canvas
+        }
+        .overlay(alignment: .topLeading) {
+            settingsPanel
+                .padding(12)
+        }
+        .overlay(alignment: .topTrailing) {
+            if showsInspector {
+                inspector
+                    .frame(width: 250)
+                    .padding(12)
             }
         }
-        .frame(minWidth: 620, minHeight: 420)
-        .background(VisualEffectBackground())
-        .onChange(of: appState.graphWindowRequested) { _, requested in
-            if requested { appState.consumeGraphWindowRequest() }
-        }
+        .clipShape(.rect(cornerRadius: 13))
         .onChange(of: graph.nodes.map(\.id)) { _, ids in
             // Keep the selection only while its node is still drawn.
             model.pruneSelection(keeping: ids)
         }
         .onAppear { appState.refreshVaultIfNeeded() }
-    }
-
-    // MARK: Toolbar
-
-    private var toolbar: some View {
-        HStack(spacing: 10) {
-            Picker("", selection: $scopeRaw) {
-                ForEach(GraphScope.allCases) { option in
-                    Text(option.title).tag(option.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 150)
-            .accessibilityIdentifier("GraphWindow.Scope")
-
-            if scope == .local {
-                Stepper(value: $depth, in: 1...4) {
-                    Text(L10n.graphDepth + " \(depth)")
-                        .font(.system(size: 11))
-                        .monospacedDigit()
-                }
-                .fixedSize()
-                .help(L10n.graphDepth)
-            }
-
-            searchField
-
-            Menu {
-                Toggle(L10n.showLabels, isOn: $showsLabels)
-                Toggle(L10n.showOrphans, isOn: $showsOrphans)
-                Divider()
-                Picker(L10n.graphNodeLimit, selection: $nodeLimit) {
-                    Text("75").tag(75)
-                    Text("150").tag(150)
-                    Text("250").tag(250)
-                    Text("500").tag(500)
-                    Text("1000").tag(1000)
-                }
-                Divider()
-                tagMenu
-                folderMenu
-                if selectedTag != nil || selectedFolder != nil {
-                    Divider()
-                    Button(L10n.clearFilters) {
-                        model.clearFilters()
-                    }
-                }
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help(L10n.columnMenu)
-            .accessibilityLabel(L10n.columnMenu)
-            .accessibilityIdentifier("GraphWindow.Options")
-
-            Button {
-                withAnimation(.snappy(duration: 0.2)) { showsInspector.toggle() }
-            } label: {
-                Image(systemName: "sidebar.trailing")
-            }
-            .buttonStyle(.borderless)
-            .help(L10n.toggleInspector)
-            .accessibilityIdentifier("GraphWindow.Inspector")
-
-            Button {
-                appState.refreshVaultIfNeeded()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.borderless)
-            .help(L10n.refreshVault)
-            .accessibilityIdentifier("GraphWindow.Refresh")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-            TextField(
-                L10n.graphFilter,
-                text: Binding(
-                    get: { model.filterText },
-                    set: { model.filterText = $0 }
-                )
-            )
-                .textFieldStyle(.plain)
-                .font(.system(size: 11))
-                .accessibilityIdentifier("GraphWindow.Filter")
-            if !filterText.isEmpty {
-                Button {
-                    model.clearFilterText()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 10))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
-                .accessibilityLabel(L10n.clearNoteSearch)
-            }
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
-        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 7))
-        .frame(maxWidth: 260)
-    }
-
-    private var tagMenu: some View {
-        Menu(L10n.tagsSection.capitalized) {
-            ForEach(baseGraph.tags, id: \.self) { tag in
-                Button {
-                    model.toggleTag(tag)
-                } label: {
-                    if selectedTag == tag {
-                        Label(tag, systemImage: "checkmark")
-                    } else {
-                        Text(tag)
-                    }
-                }
-            }
-        }
-        .disabled(baseGraph.tags.isEmpty)
-    }
-
-    private var folderMenu: some View {
-        Menu(L10n.groupByFolder) {
-            ForEach(baseGraph.folders, id: \.self) { folder in
-                Button {
-                    model.toggleFolder(folder)
-                } label: {
-                    if selectedFolder == folder {
-                        Label(folder.isEmpty ? L10n.vault : folder, systemImage: "checkmark")
-                    } else {
-                        Text(folder.isEmpty ? L10n.vault : folder)
-                    }
-                }
-            }
-        }
-        .disabled(baseGraph.folders.count < 2)
+        .accessibilityIdentifier("GraphTab")
     }
 
     // MARK: Canvas
@@ -259,10 +129,9 @@ struct GraphWindowView: View {
                     ),
                     onOpenNode: { nodeID in
                         appState.openFromGraph(url: URL(fileURLWithPath: nodeID))
-                        if !NSEvent.modifierFlags.contains(.option) {
-                            dismissGraphWindow()
-                        }
-                    }
+                    },
+                    forces: forces,
+                    immersive: true
                 )
                 statusBar
             }
@@ -273,45 +142,45 @@ struct GraphWindowView: View {
         HStack(spacing: 10) {
             Text(L10n.graphStats(nodes: graph.nodes.count, links: graph.edges.count))
                 .font(.system(size: 10.5))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.white.opacity(0.75))
             if hiddenByFilter > 0 {
                 Text(L10n.graphFiltered(hidden: hiddenByFilter))
                     .font(.system(size: 10.5))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Color.white.opacity(0.45))
             }
             if let selectedNode {
                 Button {
                     appState.openFromGraph(url: URL(fileURLWithPath: selectedNode.id))
-                    if !NSEvent.modifierFlags.contains(.option) {
-                        dismissGraphWindow()
-                    }
                 } label: {
                     Label(selectedNode.title, systemImage: "arrow.up.forward.square")
                         .font(.system(size: 10.5))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.tint)
+                .foregroundStyle(Color.accentColor)
                 .help(L10n.openNotePath(selectedNode.title))
-                .accessibilityIdentifier("GraphWindow.OpenSelection")
+                .accessibilityIdentifier("GraphTab.OpenSelection")
             }
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(.bar)
+        .background {
+            GlassBackdrop(style: .regular, cornerRadius: 9, interactive: true)
+        }
+        .padding(12)
     }
 
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "circle.hexagongrid")
                 .font(.system(size: 26, weight: .light))
-                .foregroundStyle(.quaternary)
+                .foregroundStyle(Color.white.opacity(0.25))
             Text(hiddenByFilter > 0 ? L10n.graphNoMatches : L10n.graphNoNotes)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Color.white.opacity(0.5))
             Text(L10n.graphNoNotesHint)
                 .font(.system(size: 10.5))
-                .foregroundStyle(.quaternary)
+                .foregroundStyle(Color.white.opacity(0.3))
                 .multilineTextAlignment(.center)
             if hiddenByFilter > 0 {
                 Button(L10n.clearFilters) {
@@ -323,6 +192,296 @@ struct GraphWindowView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(24)
+        .background(Color(nsColor: .black))
+    }
+
+    // MARK: Settings panel
+
+    @ViewBuilder
+    private var settingsPanel: some View {
+        if panelCollapsed {
+            Button {
+                withAnimation(.snappy(duration: 0.22)) { panelCollapsed = false }
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 30, height: 30)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.white.opacity(0.85))
+            .background {
+                GlassBackdrop(style: .regular, cornerRadius: 9, interactive: true)
+            }
+            .help(L10n.graphShowSettings)
+            .accessibilityLabel(L10n.graphShowSettings)
+            .accessibilityIdentifier("GraphTab.ExpandPanel")
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                panelHeader
+                Divider().opacity(0.4)
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        searchField
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Picker("", selection: $scopeRaw) {
+                                ForEach(GraphScope.allCases) { option in
+                                    Text(option.title).tag(option.rawValue)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .accessibilityIdentifier("GraphTab.Scope")
+
+                            if scope == .local {
+                                Stepper(value: $depth, in: 1...4) {
+                                    Text(L10n.graphDepth + " \(depth)")
+                                        .font(.system(size: 10.5))
+                                        .monospacedDigit()
+                                }
+                                .controlSize(.small)
+                                .fixedSize()
+                                .help(L10n.graphDepth)
+                            }
+                        }
+
+                        displaySection
+                        forcesSection
+                        filtersSection
+                    }
+                    .padding(12)
+                }
+            }
+            .frame(width: 228)
+            .frame(maxHeight: 460)
+            .background {
+                GlassBackdrop(style: .regular, cornerRadius: 12, interactive: true)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+            }
+            .accessibilityIdentifier("GraphTab.Panel")
+        }
+    }
+
+    private var panelHeader: some View {
+        HStack(spacing: 6) {
+            Text(L10n.graphSettingsTitle)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.85))
+            Spacer(minLength: 0)
+
+            Button {
+                withAnimation(.snappy(duration: 0.2)) { showsInspector.toggle() }
+            } label: {
+                Image(systemName: "sidebar.trailing")
+                    .font(.system(size: 10.5))
+                    .frame(width: 22, height: 22)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(showsInspector ? Color.accentColor : Color.white.opacity(0.6))
+            .help(L10n.toggleInspector)
+            .accessibilityIdentifier("GraphTab.Inspector")
+
+            Button {
+                appState.refreshVaultIfNeeded()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 10.5))
+                    .frame(width: 22, height: 22)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.white.opacity(0.6))
+            .help(L10n.refreshVault)
+            .accessibilityIdentifier("GraphTab.Refresh")
+
+            Button {
+                withAnimation(.snappy(duration: 0.22)) { panelCollapsed = true }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.white.opacity(0.6))
+            .help(L10n.graphHideSettings)
+            .accessibilityIdentifier("GraphTab.CollapsePanel")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 10))
+                .foregroundStyle(Color.white.opacity(0.4))
+            TextField(
+                L10n.graphFilter,
+                text: Binding(
+                    get: { model.filterText },
+                    set: { model.filterText = $0 }
+                )
+            )
+                .textFieldStyle(.plain)
+                .font(.system(size: 11))
+                .accessibilityIdentifier("GraphTab.Filter")
+            if !filterText.isEmpty {
+                Button {
+                    model.clearFilterText()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.white.opacity(0.4))
+                .accessibilityLabel(L10n.clearNoteSearch)
+            }
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(Color.white.opacity(0.09), in: .rect(cornerRadius: 7))
+    }
+
+    private var displaySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeading(L10n.graphDisplaySection)
+
+            forceSlider(label: L10n.graphNodeSizeSetting, value: $nodeSize, range: 0.5...2.5)
+
+            Toggle(L10n.showLabels, isOn: $showsLabels)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11))
+            Toggle(L10n.showOrphans, isOn: $showsOrphans)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11))
+
+            Picker(L10n.graphNodeLimit, selection: $nodeLimit) {
+                Text("75").tag(75)
+                Text("150").tag(150)
+                Text("250").tag(250)
+                Text("500").tag(500)
+                Text("1000").tag(1000)
+            }
+            .font(.system(size: 11))
+            .accessibilityIdentifier("GraphTab.Limit")
+        }
+    }
+
+    private var forcesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                sectionHeading(L10n.graphForcesSection)
+                Spacer(minLength: 0)
+                if forces != GraphForces() {
+                    Button(L10n.graphResetForces) {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            centerForce = 1
+                            linkDistance = 1
+                            linkForce = 1
+                            nodeSize = 1
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(Color.accentColor)
+                    .accessibilityIdentifier("GraphTab.ResetForces")
+                }
+            }
+
+            forceSlider(label: L10n.graphCenterForceSetting, value: $centerForce, range: 0...2)
+            forceSlider(label: L10n.graphLinkDistanceSetting, value: $linkDistance, range: 0.25...3)
+            forceSlider(label: L10n.graphLinkForceSetting, value: $linkForce, range: 0...2)
+        }
+    }
+
+    private var filtersSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeading(L10n.graphGroupsSection)
+
+            tagMenu
+            folderMenu
+
+            if selectedTag != nil || selectedFolder != nil {
+                Button(L10n.clearFilters) {
+                    model.clearFilters()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10.5))
+                .foregroundStyle(Color.accentColor)
+                .accessibilityIdentifier("GraphTab.ClearFilters")
+            }
+        }
+    }
+
+    private func sectionHeading(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(Color.white.opacity(0.45))
+            .tracking(0.7)
+    }
+
+    private func forceSlider(label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(label)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Color.white.opacity(0.8))
+                Spacer(minLength: 0)
+                Text(String(format: "%.2f×", value.wrappedValue))
+                    .font(.system(size: 9.5))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.white.opacity(0.45))
+            }
+            Slider(value: value, in: range)
+                .controlSize(.small)
+                .accessibilityLabel(label)
+        }
+    }
+
+    private var tagMenu: some View {
+        Menu(L10n.tagsSection.capitalized) {
+            ForEach(baseGraph.tags, id: \.self) { tag in
+                Button {
+                    model.toggleTag(tag)
+                } label: {
+                    if selectedTag == tag {
+                        Label(tag, systemImage: "checkmark")
+                    } else {
+                        Text(tag)
+                    }
+                }
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .font(.system(size: 11))
+        .fixedSize()
+        .disabled(baseGraph.tags.isEmpty)
+    }
+
+    private var folderMenu: some View {
+        Menu(L10n.groupByFolder) {
+            ForEach(baseGraph.folders, id: \.self) { folder in
+                Button {
+                    model.toggleFolder(folder)
+                } label: {
+                    if selectedFolder == folder {
+                        Label(folder.isEmpty ? L10n.vault : folder, systemImage: "checkmark")
+                    } else {
+                        Text(folder.isEmpty ? L10n.vault : folder)
+                    }
+                }
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .font(.system(size: 11))
+        .fixedSize()
+        .disabled(baseGraph.folders.count < 2)
     }
 
     // MARK: Inspector
@@ -335,33 +494,38 @@ struct GraphWindowView: View {
                 graph: graph,
                 onOpen: { url in
                     appState.openFromGraph(url: url)
-                    if !NSEvent.modifierFlags.contains(.option) {
-                        dismissGraphWindow()
-                    }
                 },
                 onSelect: { model.selectedNodeID = $0 }
             )
+            .background {
+                GlassBackdrop(style: .regular, cornerRadius: 12, interactive: true)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+            }
+            .clipShape(.rect(cornerRadius: 12))
         } else {
             VStack(spacing: 6) {
                 Image(systemName: "cursorarrow.rays")
                     .font(.system(size: 18, weight: .light))
-                    .foregroundStyle(.quaternary)
+                    .foregroundStyle(Color.white.opacity(0.25))
                 Text(L10n.selectGraphNode)
                     .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Color.white.opacity(0.45))
                     .multilineTextAlignment(.center)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity)
             .padding(16)
+            .background {
+                GlassBackdrop(style: .regular, cornerRadius: 12, interactive: true)
+            }
+            .clipShape(.rect(cornerRadius: 12))
         }
     }
 
     private func resetFilters() {
         model.resetFilters()
-    }
-
-    private func dismissGraphWindow() {
-        dismissWindow(id: AppWindows.graph)
     }
 }
 
@@ -394,11 +558,11 @@ private struct GraphInspector: View {
                     if !node.folder.isEmpty {
                         Label(node.folder, systemImage: "folder")
                             .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(Color.white.opacity(0.45))
                     }
                     Text(L10n.linkedNotes(node.linkCount))
                         .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Color.white.opacity(0.45))
                 }
 
                 if !node.tags.isEmpty {
@@ -423,6 +587,7 @@ private struct GraphInspector: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxHeight: 420)
     }
 
     @ViewBuilder
@@ -433,7 +598,7 @@ private struct GraphInspector: View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title)
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Color.white.opacity(0.45))
                 .tracking(0.6)
             content()
         }
@@ -444,7 +609,7 @@ private struct GraphInspector: View {
             if nodes.isEmpty {
                 Text(empty)
                     .font(.system(size: 10))
-                    .foregroundStyle(.quaternary)
+                    .foregroundStyle(Color.white.opacity(0.3))
             } else {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(nodes) { linked in
@@ -454,7 +619,7 @@ private struct GraphInspector: View {
                             HStack(spacing: 5) {
                                 Image(systemName: "doc.text")
                                     .font(.system(size: 9))
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(Color.white.opacity(0.45))
                                 Text(linked.title)
                                     .font(.system(size: 11))
                                     .lineLimit(1)
@@ -485,7 +650,7 @@ private struct FlowTags: View {
                             .font(.system(size: 9.5))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
-                            .background(.quaternary.opacity(0.6), in: .capsule)
+                            .background(Color.white.opacity(0.12), in: .capsule)
                     }
                 }
             }
@@ -514,12 +679,12 @@ private struct FlowTags: View {
 
 // MARK: - Model
 
-/// Filter + selection state for ``GraphWindowView``.
+/// Filter + selection state for ``GraphTabView``.
 ///
 /// A reference type so every mutation happens through `model` instead of writing
 /// `@State` from non-mutating view methods.
 @MainActor
-final class GraphWindowModel: ObservableObject {
+final class GraphTabModel: ObservableObject {
     @Published var filterText = ""
     @Published var selectedNodeID: String?
     @Published var selectedTag: String?
@@ -553,11 +718,4 @@ final class GraphWindowModel: ObservableObject {
         selectedTag = nil
         selectedFolder = nil
     }
-}
-
-// MARK: - Window ids
-
-/// Identifiers for auxiliary windows opened with `openWindow`.
-enum AppWindows {
-    static let graph = "graph"
 }
