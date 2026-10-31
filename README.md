@@ -2,10 +2,11 @@
 
 A native **Markdown** editor for macOS, built with **SwiftUI**, **AppKit**, and **Swift 6**.
 
-Iris Editor is a focused `.md` editing surface: Markdown syntax highlighting, a rendered
-preview, Markdown formatting shortcuts, line numbers, find & replace, go-to-line, live
-document stats, and Liquid Glass surfaces on native macOS window chrome — with no
-Electron, no dependencies, and no project bloat.
+Iris Editor is a native Markdown editor **and** a local-first vault reader: syntax
+highlighting, a rendered preview, formatting shortcuts, find & replace, live stats,
+Liquid Glass window chrome — plus backlinks, unlinked mentions, a link graph, daily
+notes, templates, properties, version history, and on-device AI. No Electron, no
+dependencies, no project bloat, and your notes stay plain `.md` files on disk.
 
 ## Features
 
@@ -27,6 +28,19 @@ Electron, no dependencies, and no project bloat.
   Obsidian alias) render as tinted icon cards that fold when written `> [!note]-`.
   Preview parsing is debounced and cached, so typing in a long note no longer re-parses
   the whole document on every keystroke
+- **Footnotes** — `[^label]` references render as numbered superscripts and collect into
+  a footnote list at the end of the preview; `[^label]: text` definitions support
+  indented continuation lines and are never shown inline. HTML export emits a matching
+  `<section class="footnotes">` with backlinks
+- **Editable transclusion** — a paragraph that is only `![[Note]]` expands the embedded
+  note in place, with its own tables, callouts, code, wikilinks, and footnote numbering;
+  `![[Note#Heading]]` embeds one section and `![[Note#^block]]` one block, images and
+  `![[file.png|320]]` render inline, and nesting stops at two levels so a self-referential
+  vault cannot lock up the preview. Clicking an embed's title opens the source note
+- **Mermaid and math** — ` ```mermaid ` fenced blocks render as live flowcharts, and
+  `$…$`, `$$…$$`, `\(…\)`, and `\[…\]` render through a native LaTeX layout engine
+- **Code highlighting in preview and export** — fenced code is tokenized by a shared
+  highlighter, so the preview, HTML export, and PDF all agree
 - **Editor tabs** — multiple documents open as tabs in one window: `⌘T` opens a new tab,
   `⌘W` closes the current tab (prompting to save; the last tab closes the window),
   `⇧⌘[` / `⇧⌘]` cycle tabs, and
@@ -51,6 +65,28 @@ Electron, no dependencies, and no project bloat.
 - **Wiki links** — `[[Note]]`, `[[Note|Alias]]`, and `[[Note#Heading]]` links are highlighted
   in the editor and clickable in the preview; links resolve to open tabs, recent files, or
   notes beside the current document, and missing notes are created on demand
+- **Vault sidebar** — five panes driven by one scan of the vault: files (folder tree),
+  outline, tags (`#tag` counts), backlinks, and a local link graph
+- **Backlinks and unlinked mentions** — every `[[note]]` pointing at the current note is
+  listed with its line and excerpt, and prose that mentions the title without linking it
+  is listed separately; both jump straight to the line. Mentions inside fenced code and
+  on already-linked lines are excluded, and a progress toggle switches the graph between
+  the current note's neighbourhood and the whole vault
+- **Daily notes and templates** — `⇧⌘D` opens (or creates) today's note under
+  `Daily Notes/yyyy-MM-dd.md`, and *Insert Template* applies any file from the vault's
+  `Templates/` folder
+- **Properties** — YAML frontmatter renders as a readable card in the preview instead of
+  raw `---` fences, with tag chips, dates, and booleans handled
+- **Version history** — every save records a snapshot (the newest 25 per document) and
+  *Navigate ▸ Version History* previews and restores earlier revisions
+- **Spotlight integration** — vault notes are indexed with CoreSpotlight so they appear in
+  Spotlight search and can be opened from there
+- **Quick capture everywhere** — a menu-bar `MenuBarExtra` capture window, the
+  `iriseditor://capture?text=…` URL, `iriseditor://new?text=…`, and an *Open Markdown in
+  Iris* **Services** entry for selected text or files in any app
+- **On-device and remote AI** — writing-assistant commands (inline completion, rewrite
+  selection, summarize, suggest title/tags) run through Apple Intelligence Foundation
+  Models when available, or a provider configured in Settings ▸ AI
 - **Vault search operators** — the full-vault search field (`⇧⌘F`) understands
   `tag:#idea`, `path:daily`, `file:meeting`, `match-case:`, quoted values, and `-` exclusions,
   so a filter-only query like `tag:project -path:archive` lists matching notes
@@ -159,6 +195,9 @@ xcodebuild -project IrisEditor.xcodeproj -scheme IrisEditor -derivedDataPath .bu
 | `⌘P` | Quick Switcher |
 | `⇧⌘P` | Command Palette |
 | `⇧⌘O` | Toggle Outline |
+| `⇧⌘F` | Search the whole vault |
+| `⇧⌘D` | Open (or create) today's daily note |
+| `⇧⌘N` | New note in the vault |
 | `⌘F` | Find & Replace |
 | `⌘G` | Go to Line… |
 | `⌘=` / `⌘-` / `⌘0` | Zoom in / out / reset |
@@ -186,44 +225,75 @@ IrisEditor/
 ├── Sources/IrisEditor/
 │   ├── IrisEditorApp.swift           # @main App, Commands, Settings scene, AppDelegate
 │   ├── Managers/
-│   │   └── AppState.swift            # ObservableObject: document ops, find/replace, settings, Markdown formats
+│   │   ├── AppState.swift            # ObservableObject: documents, vault, find, settings, AI, plugins
+│   │   └── SpotlightIndexer.swift    # CoreSpotlight indexing for vault notes
 │   ├── Models/
+│   │   ├── AIAssistant.swift         # Writing-assistant prompts over the selected provider
+│   │   ├── AIProvider.swift          # On-device Foundation Models or remote provider config
+│   │   ├── CJKText.swift             # CJK-aware word counting and Vim motion boundaries
+│   │   ├── CodeSyntaxHighlighter.swift # Shared tokenizer for preview, HTML, and PDF
+│   │   ├── DraftStore.swift          # Crash-recovery drafts for unsaved buffers
 │   │   ├── EditorDocument.swift      # Text, file URL, dirty flag, Markdown-aware stats
 │   │   ├── EditorSettings.swift      # Codable settings, appearance, themes, keymap + persistence
-│   │   ├── VimEngine.swift           # Pure modal-editing state machine (unit tested)
 │   │   ├── FuzzyMatch.swift          # Fuzzy scoring for the quick switcher / palette
-│   │   ├── MarkdownBlocks.swift      # Recursive block parser for the preview
+│   │   ├── HTMLToMarkdown.swift      # Paste-as-Markdown converter
+│   │   ├── KeybindingCommand.swift   # Remappable command list and shortcut parsing
+│   │   ├── LaTeXMathRenderer.swift   # Native `$…$` / `$$…$$` layout
+│   │   ├── MarkdownBlocks.swift      # Recursive block parser (+ frontmatter, footnotes)
 │   │   ├── MarkdownEditing.swift     # List/quote continuation logic for Return
-│   │   ├── MarkdownHTMLExport.swift  # Standalone HTML export renderer
-│   │   ├── MarkdownInline.swift      # Inline parser (emphasis, code, links, wiki links…)
-│   │   ├── MarkdownOutline.swift     # ATX/Setext heading extraction for the outline
+│   │   ├── MarkdownFootnotes.swift   # Footnote numbering in reference order
 │   │   ├── MarkdownFormatting.swift  # Grapheme-safe wrap/unwrap + line-prefix formatting
+│   │   ├── MarkdownFrontmatter.swift # YAML frontmatter parsing for the properties card
+│   │   ├── MarkdownHTMLExport.swift  # Standalone HTML export renderer
+│   │   ├── MarkdownInline.swift      # Inline parser (emphasis, code, links, wiki links, footnotes, embeds)
+│   │   ├── MarkdownOutline.swift     # ATX/Setext heading extraction for the outline
 │   │   ├── MarkdownSupport.swift     # Markdown file types, plain-text stripping, highlighter
-│   │   ├── RecentFiles.swift          # Persisted recent-file history
-│   │   └── TextSearch.swift          # Pure search + line-index helpers (unit tested)
+│   │   ├── MermaidRenderer.swift     # `mermaid` flowchart → SwiftUI diagram
+│   │   ├── RecentFiles.swift         # Persisted recent-file history
+│   │   ├── SessionStore.swift        # Restores tabs, cursors, and view mode at launch
+│   │   ├── TextSearch.swift          # Pure search + line-index helpers (unit tested)
+│   │   ├── Transclusion.swift        # `![[…]]` request parsing, section/block slicing
+│   │   ├── Vault.swift               # Scanning, folders, tags, backlinks, mentions, graph, search
+│   │   ├── VersionHistoryStore.swift # Snapshot history per document path
+│   │   └── VimEngine.swift           # Pure modal-editing state machine (unit tested)
 │   ├── Services/
-│   │   ├── PluginHost.swift          # JavaScriptCore plugin discovery, commands, exporters
+│   │   ├── AIProviderClient.swift    # HTTP/Foundation Models client for the writing assistant
+│   │   ├── LocalizableStrings.swift  # L10n helpers for every user-facing string
 │   │   ├── MarkdownPDFExporter.swift # Offscreen WKWebView PDF generation and printing
-│   │   └── MarkdownRTFExporter.swift # HTML → RTF export bridge
+│   │   ├── MarkdownRTFExporter.swift # HTML → RTF export bridge
+│   │   └── PluginHost.swift          # JavaScriptCore plugin discovery, commands, exporters
 │   └── Views/
-│       ├── ContentView.swift         # Root layout, editor card, overlays, native toolbar
-│       ├── TabBarView.swift          # Animated document tabs with glass active pill
 │       ├── CommandPaletteView.swift  # Obsidian-style command palette
-│       ├── QuickSwitcherView.swift   # Fuzzy open-tab / recent-file switcher
+│       ├── ContentView.swift         # Root layout, editor card, overlays, native toolbar
 │       ├── DocumentOutlineView.swift # Live heading outline sidebar
-│       ├── WindowChrome.swift        # Window configuration + NSGlassEffectView wrappers
-│       ├── TextEditorView.swift      # NSTextView editor, line-number ruler, highlights
-│       ├── MarkdownPreviewView.swift # Read-only rendered Markdown preview
 │       ├── FindReplacePanel.swift    # Glass find/replace and go-to-line bar
+│       ├── MarkdownPreviewView.swift # Rendered preview: blocks, transclusions, footnotes
+│       ├── MarkdownPropertiesCard.swift # Frontmatter as a readable card
+│       ├── QuickCaptureView.swift    # Menu-bar quick capture window
+│       ├── QuickSwitcherView.swift   # Fuzzy open-tab / recent-file switcher
+│       ├── SettingsView.swift        # Settings: Editor, Appearance, Writing, AI, Keys, Plugins, Advanced
+│       ├── SidebarView.swift         # Files, outline, tags, backlinks + mentions, graph
 │       ├── StatusBarView.swift       # Cursor / counts / size readout
-│       └── SettingsView.swift        # Tabbed Settings: Editor, Appearance, Writing, AI, Keys, Plugins, Advanced
+│       ├── TabBarView.swift          # Animated document tabs with glass active pill
+│       ├── TextEditorView.swift      # NSTextView editor, line-number ruler, highlights
+│       ├── VaultSearchView.swift     # Full-vault search with operators
+│       ├── VersionHistoryView.swift  # Snapshot list and restore
+│       ├── WikiSuggestionBar.swift   # `[[` / `![[` autocomplete
+│       └── WindowChrome.swift        # Window configuration + NSGlassEffectView wrappers
 ├── Tests/IrisEditorTests/
 │   ├── EditingAndExportTests.swift   # Continuation, statistics, offsets, HTML export
 │   ├── EditorModesTests.swift        # Vim motions, edits, and theme/settings decoding
 │   ├── IrisEditorTests.swift         # Markdown, search, and formatting tests
-│   └── WorkspaceTests.swift          # Fuzzy matching, outline, wiki links, recents
+│   ├── ObsidianParityTests.swift     # Highlights, callouts, tables, quoting
+│   ├── TransclusionAndMentionsTests.swift # Footnotes, embeds, slicing, unlinked mentions
+│   ├── VaultQueryTests.swift         # Search operators
+│   ├── WorkspaceTests.swift          # Fuzzy matching, outline, wiki links, recents
+│   └── Regression*Tests.swift        # Fixed bugs kept fixed
 ├── docs/
-│   └── plugins.md                   # Plugin manifest, command, exporter, and theme API
+│   └── plugins.md                    # Plugin manifest, command, exporter, and theme API
+├── research/
+│   ├── obsidian-feature-inventory.md # Verified Obsidian 1.14 feature inventory
+│   └── positioning.md                # Parity ledger and differentiation bets
 └── scripts/
     └── build_app_bundle.sh           # Wrap the release binary in a signed .app
 ```
@@ -251,6 +321,30 @@ IrisEditor/
   by the syntax highlighter, rendered as accent-colored links in the preview, and resolved by
   `AppState.openWikiLink` (open tab → recent file → sibling note → create sibling note).
   `ContentView` intercepts the preview's `iriseditor://wiki` URLs with `OpenURLAction`.
+- **Transclusion stays a view concern.** `MarkdownInlineParser` emits
+  `.embed(target:label:)`, `TransclusionRequest` splits `Note#Heading` / `Note#^block`,
+  and `TransclusionSlicer` cuts the requested section or block. The preview reads a
+  resolver closure out of the environment (`ContentKey`-style `EnvironmentKey`), so the
+  view never touches the file system; `ContentView` injects
+  `appState.transclusion(_:relativeTo:)`, which resolves the note through
+  `VaultScanner.resolve` and guards against self-embeds, unreadable files, and nesting
+  deeper than two levels. Embedded blocks render through the same `MarkdownBlockView`
+  with the embedded document's own link definitions and footnote numbering
+- **Footnotes are numbered from references, not definitions.** `MarkdownFootnoteIndex`
+  walks the parsed blocks in reading order (including list items, quotes, and table
+  cells) and produces both the number map and the ordered footnote list, so the preview,
+  the HTML export, and any future exporter share one numbering source
+- **Unlinked mentions reuse the backlink graph.** `VaultScanner.unlinkedMentions(of:in:)`
+  builds the same alias set as `backlinks(to:in:)`, skips fenced code blocks and lines
+  that already contain `[[`, masks inline code, and matches on word boundaries — so
+  "Design notesmith" is not a mention of "Design notes"
+- **The graph is one function, two scopes.** `VaultScanner.graph(around:in:depth:highlighting:)`
+  takes a note for a local neighbourhood and `nil` for the whole vault (capped at 60
+  nodes), while `highlighting:` still marks the open note as current in vault scope
+- **OS citizenship is declarative where possible.** `Support/Info.plist` declares the
+  `iriseditor` URL scheme and an `NSServices` entry; `AppDelegate` registers itself as
+  `NSApp.servicesProvider` and `AppState.handleCaptureURL` routes
+  `iriseditor://capture`, `iriseditor://open?path=…`, and `iriseditor://new?text=…`
 - **Outline parsing** is pure and unit-tested in `MarkdownOutline`, which handles ATX and
   Setext headings, ignores fenced code, and flattens inline Markdown for the sidebar.
 - **Find/replace** recomputes matches through a debounced Combine pipeline (150 ms) that
@@ -291,11 +385,18 @@ IrisEditor/
 
 ## Status
 
-Iris Editor is a focused native Markdown editor. Editing, syntax highlighting, preview,
-formatting, smart list continuation, HTML/PDF/RTF export, printing, find/replace,
-go-to-line, tabbed Settings, animated tabs, the quick switcher, command palette, outline
-sidebar, wiki links, recent files, themes, Vim/Emacs keymaps, the JavaScript plugin API,
-and the status bar are functional.
+Iris Editor is a native Markdown editor and local-first vault reader. Editing, syntax
+highlighting, preview, formatting, smart list continuation, HTML/PDF/RTF export,
+printing, find/replace, go-to-line, tabbed Settings, animated tabs, the quick switcher,
+command palette, the vault sidebar (files, outline, tags, backlinks, unlinked mentions,
+local and vault graphs), wiki links, footnotes, transclusions, properties, daily notes,
+templates, version history, Spotlight indexing, quick capture, Services and URL-scheme
+handling, themes, Vim/Emacs keymaps, the JavaScript plugin API, and the status bar are
+functional.
+
+Deliberately not built: a plugin marketplace, Canvas, and mobile. See
+[`research/positioning.md`](research/positioning.md) for the parity ledger and the
+one-bet-per-round plan that this build follows.
 
 Autocomplete is handled by the writing assistant instead of a bundled language model:
 Apple Intelligence (Foundation Models) on-device, or a remote provider configured in

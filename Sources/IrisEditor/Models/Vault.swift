@@ -237,8 +237,7 @@ enum VaultScanner {
     }
 
     /// Every `[[wiki link]]` in a vault that points at `url`, with line and excerpt.
-    static func backlinks(to url: URL, in files: [VaultFile]) -> [VaultBacklink] {
-        let targetPath = url.standardizedFileURL.path
+    static func backlinks(to url: URL, in files: [VaultFile]) -> [VaultBacklink] {        let targetPath = url.standardizedFileURL.path
         let targetFile = files.first { $0.url.standardizedFileURL.path == targetPath }
 
         var aliases = Set<String>()
@@ -292,8 +291,83 @@ enum VaultScanner {
         }
     }
 
+    /// Plain-text mentions of `url`'s title that are not wiki links yet.
+    ///
+    /// This is Obsidian's "unlinked mentions" pane: the same alias set as `backlinks(to:)`,
+    /// matched on word boundaries in prose while ignoring fenced and inline code.
+    static func unlinkedMentions(of url: URL, in files: [VaultFile]) -> [VaultBacklink] {
+        let targetPath = url.standardizedFileURL.path
+        let targetFile = files.first { $0.url.standardizedFileURL.path == targetPath }
+
+        var needles = Set<String>()
+        let title = (targetFile?.title ?? url.deletingPathExtension().lastPathComponent)
+        if title.count >= 2 { needles.insert(title) }
+        if let targetFile {
+            let path = strippingExtension(targetFile.relativePath)
+            if path.count >= 2, path.lowercased() != title.lowercased() { needles.insert(path) }
+        }
+        guard !needles.isEmpty else { return [] }
+
+        let patterns = needles.compactMap { needle -> NSRegularExpression? in
+            let escaped = NSRegularExpression.escapedPattern(for: needle)
+            let pattern = "(?i)(?<![\\p{L}\\p{N}_])\(escaped)(?![\\p{L}\\p{N}_])"
+            return try? NSRegularExpression(pattern: pattern)
+        }
+        guard !patterns.isEmpty else { return [] }
+
+        var results: [VaultBacklink] = []
+        var seen = Set<String>()
+
+        for file in files where file.url.standardizedFileURL.path != targetPath {
+            guard let text = readText(file.url) else { continue }
+            let lines = normalizedLines(text)
+            var inFence = false
+
+            for (index, line) in lines.enumerated() {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if fenceStart(trimmed) != nil {
+                    inFence.toggle()
+                    continue
+                }
+                guard !inFence else { continue }
+                // Lines that already link the note stay in the backlinks pane.
+                guard !line.contains("[[") else { continue }
+
+                let masked = maskingInlineCode(line)
+                let range = NSRange(location: 0, length: (masked as NSString).length)
+                let matches = patterns.contains {
+                    $0.firstMatch(in: masked, range: range) != nil
+                }
+                guard matches else { continue }
+
+                let lineNumber = index + 1
+                guard seen.insert("\(file.url.path)#\(lineNumber)").inserted else { continue }
+                results.append(
+                    VaultBacklink(
+                        sourceURL: file.url,
+                        sourceTitle: file.title,
+                        line: lineNumber,
+                        excerpt: prefixExcerpt(line, limit: 120)
+                    )
+                )
+            }
+        }
+
+        return results.sorted { lhs, rhs in
+            let order = lhs.sourceTitle.localizedStandardCompare(rhs.sourceTitle)
+            if order != .orderedSame { return order == .orderedAscending }
+            if lhs.line != rhs.line { return lhs.line < rhs.line }
+            return lhs.sourceURL.path < rhs.sourceURL.path
+        }
+    }
+
     /// Nodes and edges for the current note plus its direct (or `depth`-step) neighbours.
-    static func graph(around url: URL?, in files: [VaultFile], depth: Int = 1) -> VaultGraph {
+    static func graph(
+        around url: URL?,
+        in files: [VaultFile],
+        depth: Int = 1,
+        highlighting highlight: URL? = nil
+    ) -> VaultGraph {
         guard !files.isEmpty else { return VaultGraph(nodes: [], edges: []) }
 
         let aliasMap = aliasMap(for: files)
@@ -390,7 +464,7 @@ enum VaultScanner {
             degree[edge.target, default: 0] += 1
         }
 
-        let currentPath = url?.standardizedFileURL.path
+        let currentPath = (highlight ?? url)?.standardizedFileURL.path
         let nodes = included.map { path -> VaultGraphNode in
             let file = filesByPath[path]
             let title = file?.title
@@ -468,6 +542,26 @@ enum VaultScanner {
             titles.append(file.title)
         }
         return titles.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// Resolves a wikilink or transclusion target to a vault file.
+    ///
+    /// Accepts a bare title (`Design notes`), a path relative to the vault root
+    /// (`projects/Design notes`), and an optional `.md` extension — the same forms
+    /// Obsidian accepts, matched case-insensitively.
+    static func resolve(_ target: String, in files: [VaultFile]) -> VaultFile? {
+        let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !files.isEmpty else { return nil }
+        let filesByPath = Dictionary(
+            files.map { ($0.url.standardizedFileURL.path, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        guard let url = resolveTarget(
+            trimmed,
+            aliases: aliasMap(for: files),
+            filesByPath: filesByPath
+        ) else { return nil }
+        return filesByPath[url.standardizedFileURL.path]
     }
 
     // MARK: - Folder tree

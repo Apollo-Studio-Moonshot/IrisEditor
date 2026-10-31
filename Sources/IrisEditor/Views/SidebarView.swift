@@ -370,6 +370,49 @@ private struct VaultBacklinksPane: View {
                             .padding(.horizontal, 10)
                             .padding(.top, 8)
 
+                        if !appState.vaultUnlinkedMentions.isEmpty {
+                            Text(L10n.unlinkedMentionsTitle)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 10)
+                                .padding(.top, 10)
+
+                            Text(L10n.unlinkedMentions(appState.vaultUnlinkedMentions.count))
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 10)
+
+                            ForEach(appState.vaultUnlinkedMentions) { link in
+                                Button {
+                                    appState.open(url: link.sourceURL)
+                                    appState.reveal(line: link.line)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(link.sourceTitle)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                        Text(link.excerpt)
+                                            .font(.system(size: 10.5))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(8)
+                                    .background {
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.accentColor.opacity(0.07))
+                                    }
+                                    .contentShape(.rect)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.horizontal, 6)
+                                .accessibilityLabel(link.sourceTitle)
+                                .accessibilityValue(link.excerpt)
+                                .accessibilityIdentifier("Sidebar.UnlinkedMention.\(link.sourceURL.lastPathComponent)")
+                            }
+                        }
+
                         ForEach(appState.vaultBacklinks) { link in
                             Button {
                                 appState.open(url: link.sourceURL)
@@ -414,6 +457,19 @@ private struct VaultGraphPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            Picker(L10n.graphScope, selection: Binding(
+                get: { appState.showsGlobalGraph },
+                set: { appState.setShowsGlobalGraph($0) }
+            )) {
+                Text(L10n.localGraph).tag(false)
+                Text(L10n.vaultGraph).tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+            .accessibilityIdentifier("Sidebar.GraphScope")
+
             if appState.vaultGraph.nodes.isEmpty {
                 EmptyPane(
                     icon: "point.3.connected.trianglepath.dotted",

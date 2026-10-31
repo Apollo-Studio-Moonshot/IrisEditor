@@ -129,16 +129,29 @@ struct MarkdownDocument: Equatable {
     /// YAML frontmatter at the top of the document, when present. The block is excluded
     /// from `blocks` so raw `---`/`key: value` lines never render as Markdown.
     let frontmatter: MarkdownFrontmatter?
+    /// `[^label]: text` definitions, in source order and excluded from `blocks`.
+    let footnotes: [MarkdownFootnote]
 
     init(
         blocks: [MarkdownBlock],
         references: [String: MarkdownLinkReference],
-        frontmatter: MarkdownFrontmatter? = nil
+        frontmatter: MarkdownFrontmatter? = nil,
+        footnotes: [MarkdownFootnote] = []
     ) {
         self.blocks = blocks
         self.references = references
         self.frontmatter = frontmatter
+        self.footnotes = footnotes
     }
+}
+
+/// A footnote definition (`[^1]: the note text`), rendered after the document body.
+struct MarkdownFootnote: Equatable, Sendable, Identifiable {
+    let label: String
+    /// Raw Markdown for the definition body; continuation lines keep their paragraphs.
+    let text: String
+
+    var id: String { label }
 }
 
 /// Per-column alignment from a GFM pipe-table delimiter row (`:---`, `:---:`, `---:`).
@@ -164,13 +177,87 @@ enum MarkdownBlockParser {
 
         let frontmatter = MarkdownFrontmatterParser.parse(normalized)
         let body = frontmatter?.body ?? normalized
-        let lines = body.components(separatedBy: "\n")
+        var lines = body.components(separatedBy: "\n")
+        let footnotes = extractFootnotes(&lines)
         let blocks = parseLines(lines, references: &references)
         return MarkdownDocument(
             blocks: blocks,
             references: references,
-            frontmatter: frontmatter
+            frontmatter: frontmatter,
+            footnotes: footnotes
         )
+    }
+
+    /// Removes top-level `[^label]: body` definitions (with their indented continuation
+    /// lines) from `lines` and returns them in source order.
+    ///
+    /// Definitions are collected before block parsing so a footnote body can contain
+    /// blank lines and nested paragraphs without turning into top-level blocks.
+    private static func extractFootnotes(_ lines: inout [String]) -> [MarkdownFootnote] {
+        var footnotes: [MarkdownFootnote] = []
+        var remaining: [String] = []
+        remaining.reserveCapacity(lines.count)
+
+        var index = 0
+        while index < lines.count {
+            let raw = lines[index]
+            let indent = indentColumns(raw)
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+
+            guard indent <= 3,
+                  trimmed.hasPrefix("[^"),
+                  let close = trimmed.firstIndex(of: "]"),
+                  trimmed[trimmed.index(after: close)...].hasPrefix(":") else {
+                remaining.append(raw)
+                index += 1
+                continue
+            }
+
+            let label = String(trimmed[trimmed.startIndex..<close].dropFirst(2))
+                .trimmingCharacters(in: .whitespaces)
+            guard !label.isEmpty, !label.contains("[") else {
+                remaining.append(raw)
+                index += 1
+                continue
+            }
+
+            let afterColon = trimmed.index(close, offsetBy: 1)
+            var body = String(trimmed[trimmed.index(after: afterColon)...])
+            if body.hasPrefix(" ") { body.removeFirst() }
+
+            var bodyLines: [String] = [body]
+            index += 1
+
+            // Continuation lines: blank lines and lines indented at least four columns.
+            while index < lines.count {
+                let next = lines[index]
+                let nextIndent = indentColumns(next)
+                if next.trimmingCharacters(in: .whitespaces).isEmpty {
+                    // Keep blank lines only when another indented line follows.
+                    var lookahead = index + 1
+                    while lookahead < lines.count,
+                          lines[lookahead].trimmingCharacters(in: .whitespaces).isEmpty {
+                        lookahead += 1
+                    }
+                    guard lookahead < lines.count,
+                          indentColumns(lines[lookahead]) >= 4 else { break }
+                    bodyLines.append("")
+                    index += 1
+                    continue
+                }
+                guard nextIndent >= 4 else { break }
+                bodyLines.append(dropIndent(next, 4))
+                index += 1
+            }
+
+            let text = bodyLines
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            footnotes.append(MarkdownFootnote(label: label, text: text))
+        }
+
+        lines = remaining
+        return footnotes
     }
 
     // MARK: - Block loop

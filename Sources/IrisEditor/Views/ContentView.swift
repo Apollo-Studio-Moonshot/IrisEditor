@@ -362,6 +362,7 @@ struct ContentView: View {
                 theme: appState.settings.previewTheme,
                 onToggleTask: { text in appState.toggleTask(text: text) }
             )
+            .environment(\.transclusionResolver, transclusionResolver)
             .clipShape(.rect(cornerRadius: 13))
         case .split:
             HSplitView {
@@ -373,6 +374,7 @@ struct ContentView: View {
                     theme: appState.settings.previewTheme,
                     onToggleTask: { text in appState.toggleTask(text: text) }
                 )
+                .environment(\.transclusionResolver, transclusionResolver)
                 .frame(minWidth: 280)
             }
             .clipShape(.rect(cornerRadius: 13))
@@ -412,6 +414,13 @@ struct ContentView: View {
 
     private func previewBaseURL(for document: EditorDocument) -> URL? {
         document.fileURL?.deletingLastPathComponent()
+    }
+
+    /// Lets the preview expand `![[…]]` embeds without owning file access.
+    private var transclusionResolver: @MainActor (String, URL?) -> TransclusionContent {
+        { target, directory in
+            appState.transclusion(target, relativeTo: directory)
+        }
     }
 
     private func sourcePane(for document: EditorDocument) -> some View {

@@ -130,6 +130,9 @@ final class AppState: ObservableObject {
     // MARK: - Vault
 
     /// Which pane the unified sidebar shows.
+    /// The graph pane shows the whole vault instead of the current note's neighbourhood.
+    @Published private(set) var showsGlobalGraph = false
+
     @Published var sidebarTab: VaultPane = .files {
         didSet { if sidebarTab == .tags || sidebarTab == .backlinks || sidebarTab == .graph { refreshVaultIfNeeded() } }
     }
@@ -140,6 +143,8 @@ final class AppState: ObservableObject {
     @Published private(set) var vaultFiles: [VaultFile] = []
     @Published private(set) var vaultTags: [VaultTag] = []
     @Published private(set) var vaultBacklinks: [VaultBacklink] = []
+    /// Plain-text mentions of the current note that are not wiki links yet.
+    @Published private(set) var vaultUnlinkedMentions: [VaultBacklink] = []
     @Published private(set) var vaultGraph = VaultGraph(nodes: [], edges: [])
     @Published private(set) var vaultTemplates: [URL] = []
 
@@ -546,8 +551,109 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func revealHeading(named name: String?) {
-        guard let name, !name.isEmpty else { return }
+    /// Resolves a `![[…]]` transclusion to renderable content.
+    ///
+    /// `relativeTo` is the note doing the embedding, which matters for sibling image
+    /// paths and for the self-embed guard. Reads are synchronous and small: an embed
+    /// shows a note that is already in the vault index, not an arbitrary file.
+    func transclusion(_ raw: String, relativeTo directory: URL?) -> TransclusionContent {
+        let request = TransclusionRequest.parse(raw)
+        guard !request.target.isEmpty else {
+            return .unresolved(reason: "Empty embed target")
+        }
+
+        if let image = resolveAttachment(request.target, in: directory) {
+            return .image(image)
+        }
+
+        guard let url = resolveNote(request.target, in: directory) else {
+            return .unresolved(reason: "No note named “\(request.target)”")
+        }
+        if let current = document.fileURL,
+           current.standardizedFileURL == url.standardizedFileURL {
+            return .unresolved(reason: "A note cannot embed itself")
+        }
+        guard let text = Self.readText(at: url) else {
+            return .unresolved(reason: "Couldn’t read “\(url.lastPathComponent)”")
+        }
+
+        let body: String
+        if let heading = request.heading {
+            guard let section = TransclusionSlicer.section(from: text, heading: heading) else {
+                return .unresolved(reason: "No heading “\(heading)” in \(url.lastPathComponent)")
+            }
+            body = section
+        } else if let blockID = request.blockID {
+            guard let block = TransclusionSlicer.block(from: text, id: blockID) else {
+                return .unresolved(reason: "No block “^\(blockID)” in \(url.lastPathComponent)")
+            }
+            body = block
+        } else {
+            body = text
+        }
+
+        let title = url.deletingPathExtension().lastPathComponent
+        return .markdown(title: title, text: body, url: url)
+    }
+
+    /// Finds an embeddable attachment: a sibling of the embedding note first, then
+    /// anywhere under the vault root (matching by file name, like Obsidian).
+    private func resolveAttachment(_ target: String, in directory: URL?) -> URL? {
+        let extensions = ["png", "jpg", "jpeg", "gif", "heic", "webp", "svg", "avif", "pdf"]
+        let name = (target as NSString).lastPathComponent
+        let fileExtension = (name as NSString).pathExtension.lowercased()
+        guard extensions.contains(fileExtension) else { return nil }
+
+        let fileManager = FileManager.default
+        if let directory {
+            let sibling = directory
+                .appendingPathComponent(target)
+                .standardizedFileURL
+            if fileManager.fileExists(atPath: sibling.path) { return sibling }
+        }
+
+        if let root = vaultRootURL?.standardizedFileURL {
+            let direct = root.appendingPathComponent(target).standardizedFileURL
+            if direct.path.hasPrefix(root.path + "/"),
+               fileManager.fileExists(atPath: direct.path) {
+                return direct
+            }
+
+            if let enumerator = fileManager.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) {
+                var visited = 0
+                for case let candidate as URL in enumerator {
+                    visited += 1
+                    if visited > 5_000 { break }
+                    if candidate.lastPathComponent.caseInsensitiveCompare(name) == .orderedSame {
+                        return candidate
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    private func resolveNote(_ target: String, in directory: URL?) -> URL? {
+        if let file = VaultScanner.resolve(target, in: vaultFiles) {
+            return file.url
+        }
+        guard let directory else { return nil }
+        let hasExtension = ["md", "markdown"].contains(
+            (target as NSString).pathExtension.lowercased()
+        )
+        let fileName = hasExtension ? target : target + "." + MarkdownFileType.defaultExtension
+        let candidate = directory
+            .appendingPathComponent(fileName)
+            .standardizedFileURL
+        guard FileManager.default.fileExists(atPath: candidate.path) else { return nil }
+        return candidate
+    }
+
+    private func revealHeading(named name: String?) {        guard let name, !name.isEmpty else { return }
         guard let heading = MarkdownOutline.headings(in: document.text).first(where: {
             $0.title.caseInsensitiveCompare(name) == .orderedSame
         }) else {
@@ -879,15 +985,78 @@ final class AppState: ObservableObject {
 
     /// Handles `iriseditor://capture?text=…` from Shortcuts or other apps.
     func handleCaptureURL(_ url: URL) {
-        guard url.scheme == "iriseditor", url.host == "capture" else { return }
-        let text = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-            .queryItems?
-            .first(where: { $0.name == "text" })?
-            .value ?? ""
-        if text.isEmpty {
+        guard url.scheme == "iriseditor" else { return }
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+
+        func query(_ name: String) -> String? {
+            components?.queryItems?.first(where: { $0.name == name })?.value
+        }
+
+        switch url.host {
+        case "capture":
+            let text = query("text") ?? ""
+            if text.isEmpty {
+                NSApp.activate(ignoringOtherApps: true)
+            } else {
+                saveQuickCapture(text)
+            }
+
+        case "open":
+            // `iriseditor://open?path=/abs/Note.md` — used by Services, Shortcuts, and
+            // any other app that wants to hand Iris a specific file.
+            guard let raw = query("path") ?? query("url"),
+                  !raw.isEmpty else {
+                NSApp.activate(ignoringOtherApps: true)
+                return
+            }
+            let expanded = (raw as NSString).expandingTildeInPath
+            let target = expanded.hasPrefix("/")
+                ? URL(fileURLWithPath: expanded)
+                : URL(
+                    fileURLWithPath: expanded,
+                    relativeTo: URL(
+                        fileURLWithPath: FileManager.default.currentDirectoryPath,
+                        isDirectory: true
+                    )
+                ).standardizedFileURL
+            guard FileManager.default.fileExists(atPath: target.path) else {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "No file at “\(raw)”."
+                alert.informativeText = "The link may point at a note that was moved or deleted."
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+                return
+            }
+            open(url: target)
             NSApp.activate(ignoringOtherApps: true)
-        } else {
-            saveQuickCapture(text)
+
+        case "new":
+            let text = query("text") ?? ""
+            if text.isEmpty {
+                newDocument()
+            } else {
+                quickCaptureInNewTab(text)
+            }
+
+        default:
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    /// Handles the “Open Markdown in Iris” Services request: file URLs open as tabs,
+    /// plain text opens in a new unsaved tab so the user can decide where it belongs.
+    func openServicePasteboard(_ pasteboard: NSPasteboard) {
+        if let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL], !urls.isEmpty {
+            open(urls: urls)
+            return
+        }
+        if let text = pasteboard.string(forType: .string),
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            quickCaptureInNewTab(text)
         }
     }
 
@@ -1351,7 +1520,19 @@ final class AppState: ObservableObject {
     func refreshBacklinks() {
         let url = document.fileURL
         vaultBacklinks = url.map { VaultScanner.backlinks(to: $0, in: vaultFiles) } ?? []
-        vaultGraph = VaultScanner.graph(around: url, in: vaultFiles)
+        vaultUnlinkedMentions = url.map { VaultScanner.unlinkedMentions(of: $0, in: vaultFiles) } ?? []
+        vaultGraph = VaultScanner.graph(
+            around: showsGlobalGraph ? nil : url,
+            in: vaultFiles,
+            highlighting: url
+        )
+    }
+
+    /// Switches the graph pane between the current note's neighbourhood and the whole vault.
+    func setShowsGlobalGraph(_ shows: Bool) {
+        guard showsGlobalGraph != shows else { return }
+        showsGlobalGraph = shows
+        refreshBacklinks()
     }
 
     func chooseVaultFolder() {

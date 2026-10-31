@@ -17,6 +17,10 @@ indirect enum MarkdownInline: Equatable {
     case image(source: String, alt: String, title: String?)
     /// Obsidian-style `[[target]]` or `[[target|label]]` link.
     case wikiLink(target: String, label: String)
+    /// `[^label]` — a footnote reference. Definitions live on `MarkdownDocument.footnotes`.
+    case footnoteReference(label: String)
+    /// Obsidian-style `![[target]]` transclusion of a note, heading, or attachment.
+    case embed(target: String, label: String)
     case softBreak
     case hardBreak
     case html(String)
@@ -38,6 +42,10 @@ extension Array where Element == MarkdownInline {
                 return alt
             case .wikiLink(_, let label):
                 return label
+            case .embed(_, let label):
+                return label
+            case .footnoteReference:
+                return ""
             case .softBreak, .hardBreak:
                 return " "
             }
@@ -227,6 +235,21 @@ struct MarkdownInlineParser {
                 continue
             }
 
+            if character == "!",
+               index + 2 < characters.count,
+               characters[index + 1] == "[",
+               characters[index + 2] == "[" {
+                if let parsed = parseEmbed(characters, at: index) {
+                    flushText()
+                    tokens.append(.inline(parsed.inline))
+                    index = parsed.nextIndex
+                } else {
+                    textBuffer.append(character)
+                    index += 1
+                }
+                continue
+            }
+
             if character == "!", index + 1 < characters.count, characters[index + 1] == "[" {
                 flushText()
                 if let parsed = parseLinkOrImage(characters, at: index, isImage: true) {
@@ -249,6 +272,15 @@ struct MarkdownInlineParser {
                     index += 1
                 }
                 continue
+            }
+
+            if character == "[", index + 1 < characters.count, characters[index + 1] == "^" {
+                if let parsed = parseFootnoteReference(characters, at: index) {
+                    flushText()
+                    tokens.append(.inline(parsed.inline))
+                    index = parsed.nextIndex
+                    continue
+                }
             }
 
             if character == "[" {
@@ -761,6 +793,66 @@ struct MarkdownInlineParser {
         _ characters: [Character],
         at start: Int
     ) -> (inline: MarkdownInline, nextIndex: Int)? {
+        guard let parsed = parseBracketedWikiSpan(characters, at: start) else { return nil }
+        return (
+            inline: .wikiLink(target: parsed.target, label: parsed.label),
+            nextIndex: parsed.nextIndex
+        )
+    }
+
+    /// Parses Obsidian-style `![[target]]` transclusion spans.
+    ///
+    /// `![[Note]]` embeds the whole note, `![[Note#Heading]]` embeds one section, and
+    /// `![[image.png]]` embeds an attachment. The `[` of the inner `[[` is at `start + 1`.
+    private func parseEmbed(
+        _ characters: [Character],
+        at start: Int
+    ) -> (inline: MarkdownInline, nextIndex: Int)? {
+        guard start + 1 < characters.count,
+              let parsed = parseBracketedWikiSpan(characters, at: start + 1) else {
+            return nil
+        }
+        // `|640x480`-style dimension hints and arbitrary labels both collapse to the label
+        // the preview shows when the target cannot be resolved.
+        var label = parsed.label
+        if label.range(of: #"^\d+(x\d+)?$"#, options: .regularExpression) != nil {
+            label = parsed.target
+        }
+        return (
+            inline: .embed(target: parsed.target, label: label),
+            nextIndex: parsed.nextIndex
+        )
+    }
+
+    /// Parses `[^label]` footnote references.
+    private func parseFootnoteReference(
+        _ characters: [Character],
+        at start: Int
+    ) -> (inline: MarkdownInline, nextIndex: Int)? {
+        var index = start + 2
+        var label = ""
+        while index < characters.count {
+            let character = characters[index]
+            if character == "\n" { return nil }
+            if character == "]" {
+                let trimmed = label.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty, !trimmed.contains("[") else { return nil }
+                return (
+                    inline: .footnoteReference(label: trimmed),
+                    nextIndex: index + 1
+                )
+            }
+            label.append(character)
+            index += 1
+        }
+        return nil
+    }
+
+    /// Shared `[[target|label]]` scanner. `start` points at the first `[`.
+    private func parseBracketedWikiSpan(
+        _ characters: [Character],
+        at start: Int
+    ) -> (target: String, label: String, nextIndex: Int)? {
         guard start + 1 < characters.count,
               characters[start] == "[",
               characters[start + 1] == "[" else {
@@ -782,10 +874,7 @@ struct MarkdownInlineParser {
                     : target
                 let label = rawLabel.isEmpty ? target : rawLabel
 
-                return (
-                    inline: .wikiLink(target: target, label: label),
-                    nextIndex: index + 2
-                )
+                return (target: target, label: label, nextIndex: index + 2)
             }
             index += 1
         }

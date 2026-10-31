@@ -387,6 +387,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        // Advertise the “Open Markdown in Iris” service declared in Info.plist.
+        NSApp.servicesProvider = self
+        NSUpdateDynamicServices()
+    }
+
+    /// Services entry point for `NSServices` in Info.plist. Receives either file URLs
+    /// (Finder/Open With) or a plain-text selection from any app.
+    @objc func openMarkdown(
+        _ pasteboard: NSPasteboard,
+        userData: String?,
+        error: AutoreleasingUnsafeMutablePointer<NSString>
+    ) {
+        AppState.shared.openServicePasteboard(pasteboard)
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -409,7 +422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
-            if url.scheme == "iriseditor", url.host == "capture" {
+            if url.scheme == "iriseditor" {
                 AppState.shared.handleCaptureURL(url)
             } else {
                 AppState.shared.open(urls: [url])

@@ -36,6 +36,26 @@
     <true/>
     <key>NSSupportsSuddenTermination</key>
     <true/>
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Open Markdown in Iris</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>openMarkdown</string>
+            <key>NSPortName</key>
+            <string>Iris Editor</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>public.plain-text</string>
+                <string>public.file-url</string>
+                <string>NSFilenamesPboardType</string>
+            </array>
+        </dict>
+    </array>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

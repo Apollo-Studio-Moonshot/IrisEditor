@@ -282,6 +282,32 @@ enum L10n {
             : String(format: NSLocalizedString("%d linked notes", comment: "Backlinks pane count"), count)
     }
 
+    static func unlinkedMentions(_ count: Int) -> String {
+        count == 1
+            ? NSLocalizedString("1 unlinked mention", comment: "Unlinked mentions count for one mention")
+            : String(format: NSLocalizedString("%d unlinked mentions", comment: "Unlinked mentions pane count"), count)
+    }
+
+    static func unlinkedMentionHint(_ title: String) -> String {
+        String(format: NSLocalizedString("Mentions of “%@” that are not links yet.", comment: "Unlinked mentions empty-state hint with the document name"), title)
+    }
+
+    static var graphScope: String {
+        NSLocalizedString("Graph scope", comment: "Graph pane scope picker accessibility label")
+    }
+
+    static var localGraph: String {
+        NSLocalizedString("Local", comment: "Graph pane local scope option")
+    }
+
+    static var vaultGraph: String {
+        NSLocalizedString("Vault", comment: "Graph pane whole-vault scope option")
+    }
+
+    static var unlinkedMentionsTitle: String {
+        NSLocalizedString("Unlinked mentions", comment: "Unlinked mentions section heading")
+    }
+
     static func backlinksHint(_ title: String) -> String {
         String(format: NSLocalizedString("Notes linking to [[%@]] appear here.", comment: "Backlinks empty-state hint with the document name"), title)
     }

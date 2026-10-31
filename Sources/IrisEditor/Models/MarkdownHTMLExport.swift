@@ -146,6 +146,14 @@ enum MarkdownHTMLExport {
           color: var(--accent);
           font-size: 0.82em;
         }
+        .footnote-ref { font-size: 0.78em; line-height: 1; }
+        .footnote-ref a { text-decoration: none; }
+        .footnotes { margin-top: 3rem; font-size: 0.92em; color: var(--muted); }
+        .footnotes hr { margin-bottom: 1.4rem; }
+        .footnotes ol { padding-left: 1.4rem; }
+        .footnotes li { margin-bottom: 0.6rem; }
+        .footnote-back { text-decoration: none; }
+        a.embed { border-bottom: 1px dashed currentColor; text-decoration: none; }
         @page { size: auto; margin: 18mm 16mm; }
         @media print {
           :root { color-scheme: light; }
@@ -181,7 +189,8 @@ enum MarkdownHTMLExport {
             output += renderProperties(frontmatter)
             output += "\n"
         }
-        output += render(blocks: parsed.blocks, references: parsed.references)
+        output += render(blocks: parsed.blocks, context: RenderContext(document: parsed))
+        output += renderFootnotes(for: parsed)
         return output
     }
 
@@ -289,25 +298,25 @@ enum MarkdownHTMLExport {
 
     private static func render(
         blocks: [MarkdownBlock],
-        references: [String: MarkdownLinkReference]
+        context: RenderContext
     ) -> String {
-        blocks.map { render(block: $0, references: references) }.joined(separator: "\n")
+        blocks.map { render(block: $0, context: context) }.joined(separator: "\n")
     }
 
     private static func render(
         block: MarkdownBlock,
-        references: [String: MarkdownLinkReference]
+        context: RenderContext
     ) -> String {
         switch block {
         case .heading(let level, let text):
             let tag = "h\(min(max(level, 1), 6))"
-            return "<\(tag)>\(renderInline(text, references: references))</\(tag)>"
+            return "<\(tag)>\(renderInline(text, context: context))</\(tag)>"
 
         case .paragraph(let text):
             if let latex = displayMath(text) {
                 return "<div class=\"math-block\">\(escape(LaTeXMathRenderer.render(latex)))</div>"
             }
-            return "<p>\(renderInline(text, references: references))</p>"
+            return "<p>\(renderInline(text, context: context))</p>"
 
         case .blockQuote(let blocks):
             if let callout = MarkdownCallout.parse(blocks) {
@@ -319,14 +328,14 @@ enum MarkdownHTMLExport {
                     : ""
                 return """
                 <details class="callout callout-\(name)\(foldClass)\(collapsed)"\(callout.isCollapsed ? "" : " open")>
-                <summary>\(caret)<span class=\"callout-title\">\(renderInline(callout.title, references: references))</span></summary>
+                <summary>\(caret)<span class=\"callout-title\">\(renderInline(callout.title, context: context))</span></summary>
                 <div class=\"callout-body\">
-                \(render(blocks: callout.body, references: references))
+                \(render(blocks: callout.body, context: context))
                 </div>
                 </details>
                 """
             }
-            return "<blockquote>\n\(render(blocks: blocks, references: references))\n</blockquote>"
+            return "<blockquote>\n\(render(blocks: blocks, context: context))\n</blockquote>"
 
         case .codeBlock(let language, let lines):
             let code = lines.joined(separator: "\n")
@@ -349,17 +358,17 @@ enum MarkdownHTMLExport {
                 if let task = taskInfo(item) {
                     let nested = render(
                         blocks: Array(item.blocks.dropFirst()),
-                        references: references
+                        context: context
                     )
                     let checkbox = task.checked ? " checked" : ""
-                    return "<li class=\"task\"><input type=\"checkbox\"\(checkbox) disabled> \(renderInline(task.text, references: references))\(nested.isEmpty ? "" : "\n" + nested)</li>"
+                    return "<li class=\"task\"><input type=\"checkbox\"\(checkbox) disabled> \(renderInline(task.text, context: context))\(nested.isEmpty ? "" : "\n" + nested)</li>"
                 }
-                return "<li>\n\(render(blocks: item.blocks, references: references))\n</li>"
+                return "<li>\n\(render(blocks: item.blocks, context: context))\n</li>"
             }.joined(separator: "\n")
             return "<\(tag)\(startAttribute)\(listClass)>\n\(renderedItems)\n</\(tag)>"
 
         case .table(let header, let alignments, let rows):
-            return renderTable(header: header, alignments: alignments, rows: rows, references: references)
+            return renderTable(header: header, alignments: alignments, rows: rows, context: context)
 
         case .thematicBreak:
             return "<hr>"
@@ -375,12 +384,12 @@ enum MarkdownHTMLExport {
         header: [String],
         alignments: [MarkdownTableAlignment],
         rows: [[String]],
-        references: [String: MarkdownLinkReference]
+        context: RenderContext
     ) -> String {
         var output = "<table>\n<thead>\n<tr>\n"
         for (column, cell) in header.enumerated() {
             output += "<th\(alignmentStyle(for: column, in: alignments))>"
-            output += renderInline(cell, references: references)
+            output += renderInline(cell, context: context)
             output += "</th>\n"
         }
         output += "</tr>\n</thead>\n"
@@ -391,7 +400,7 @@ enum MarkdownHTMLExport {
                 output += "<tr>\n"
                 for (column, cell) in row.enumerated() {
                     output += "<td\(alignmentStyle(for: column, in: alignments))>"
-                    output += renderInline(cell, references: references)
+                    output += renderInline(cell, context: context)
                     output += "</td>\n"
                 }
                 output += "</tr>\n"
@@ -418,37 +427,37 @@ enum MarkdownHTMLExport {
 
     private static func renderInline(
         _ text: String,
-        references: [String: MarkdownLinkReference]
+        context: RenderContext
     ) -> String {
-        let inlines = MarkdownInlineParser(references: references).parse(text)
-        return inlines.map { renderInline($0, references: references) }.joined()
+        let inlines = MarkdownInlineParser(references: context.references).parse(text)
+        return inlines.map { renderInline($0, context: context) }.joined()
     }
 
     private static func renderInline(
         _ inline: MarkdownInline,
-        references: [String: MarkdownLinkReference]
+        context: RenderContext
     ) -> String {
         switch inline {
         case .text(let value):
             return renderText(value)
 
         case .emphasis(let children):
-            return "<em>\(renderInline(children, references: references))</em>"
+            return "<em>\(renderInline(children, context: context))</em>"
 
         case .strong(let children):
-            return "<strong>\(renderInline(children, references: references))</strong>"
+            return "<strong>\(renderInline(children, context: context))</strong>"
 
         case .strikethrough(let children):
-            return "<del>\(renderInline(children, references: references))</del>"
+            return "<del>\(renderInline(children, context: context))</del>"
 
         case .highlight(let children):
-            return "<mark>\(renderInline(children, references: references))</mark>"
+            return "<mark>\(renderInline(children, context: context))</mark>"
 
         case .code(let value):
             return "<code>\(escape(value))</code>"
 
         case .link(let destination, let title, let children):
-            let label = renderInline(children, references: references)
+            let label = renderInline(children, context: context)
             guard let href = safeDestination(destination) else { return label }
             let titleAttribute = title.map { " title=\"\(escapeAttribute($0))\"" } ?? ""
             return "<a href=\"\(escapeAttribute(href))\"\(titleAttribute)>\(label)</a>"
@@ -462,6 +471,16 @@ enum MarkdownHTMLExport {
 
         case .wikiLink(let target, let label):
             return "<a href=\"\(escapeAttribute(wikiHref(for: target)))\">\(escape(label))</a>"
+
+        case .footnoteReference(let label):
+            guard let number = context.footnoteNumbers[label] else { return escape("[^\(label)]") }
+            let anchor = escapeAttribute(footnoteAnchor(label))
+            return "<sup class=\"footnote-ref\"><a href=\"#fn-\(anchor)\" id=\"fnref-\(anchor)\">\(number)</a></sup>"
+
+        case .embed(let target, let label):
+            // An export is a single self-contained file, so a transclusion degrades to a
+            // link to the embedded note rather than copying foreign content into the page.
+            return "<a class=\"embed\" href=\"\(escapeAttribute(wikiHref(for: target)))\">\(escape(label))</a>"
 
         case .softBreak:
             return "\n"
@@ -478,12 +497,56 @@ enum MarkdownHTMLExport {
 
     private static func renderInline(
         _ inlines: [MarkdownInline],
-        references: [String: MarkdownLinkReference]
+        context: RenderContext
     ) -> String {
-        inlines.map { renderInline($0, references: references) }.joined()
+        inlines.map { renderInline($0, context: context) }.joined()
     }
 
     // MARK: - Helpers
+
+    /// Shared state for one export pass: link definitions plus the footnote numbering
+    /// derived from the whole document, so references and the footnote list agree.
+    private struct RenderContext {
+        let references: [String: MarkdownLinkReference]
+        let footnoteNumbers: [String: Int]
+
+        init(document: MarkdownDocument) {
+            self.references = document.references
+            self.footnoteNumbers = MarkdownFootnoteIndex.numbers(in: document)
+        }
+    }
+
+    private static func renderFootnotes(for document: MarkdownDocument) -> String {
+        let footnotes = MarkdownFootnoteIndex.orderedFootnotes(for: document)
+        guard !footnotes.isEmpty else { return "" }
+        let context = RenderContext(document: document)
+        let items = footnotes.map { entry -> String in
+            let anchor = escapeAttribute(footnoteAnchor(entry.footnote.label))
+            let paragraphs = entry.footnote.text
+                .components(separatedBy: "\n\n")
+                .map { paragraph in
+                    let single = paragraph
+                        .components(separatedBy: "\n")
+                        .joined(separator: " ")
+                        .trimmingCharacters(in: .whitespaces)
+                    return "<p>\(renderInline(single, context: context))</p>"
+                }
+                .joined()
+            return "<li id=\"fn-\(anchor)\">\(paragraphs)<a class=\"footnote-back\" href=\"#fnref-\(anchor)\" aria-label=\"Back to reference\">&#8617;</a></li>"
+        }
+        return "\n<section class=\"footnotes\">\n<hr>\n<ol>\n\(items.joined(separator: "\n"))\n</ol>\n</section>"
+    }
+
+    /// Anchor-safe form of a footnote label (`[^my note]` becomes `my-note`).
+    private static func footnoteAnchor(_ label: String) -> String {
+        let scalars = label.unicodeScalars.map { scalar -> Character in
+            CharacterSet.alphanumerics.contains(scalar) || scalar == "-" || scalar == "_"
+                ? Character(scalar)
+                : "-"
+        }
+        let anchor = String(scalars)
+        return anchor.isEmpty ? "note" : anchor
+    }
 
     private struct ExportedTask {
         let checked: Bool

@@ -36,6 +36,16 @@ struct MarkdownPreviewView: View {
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+
+                let footnotes = MarkdownFootnoteIndex.orderedFootnotes(for: document)
+                if !footnotes.isEmpty {
+                    MarkdownFootnotesSection(
+                        entries: footnotes,
+                        references: document.references,
+                        baseURL: baseURL
+                    )
+                    .padding(.top, 10)
+                }
             }
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -51,6 +61,7 @@ struct MarkdownPreviewView: View {
         .foregroundStyle(theme.text)
         .environment(\.previewTheme, theme)
         .environment(\.togglePreviewTask, onToggleTask)
+        .environment(\.footnoteNumbers, MarkdownFootnoteIndex.numbers(in: document))
         .environment(\.colorScheme, theme.isDark ? .dark : .light)
         .task(id: markdown) {
             await reparseDebounced()
@@ -95,6 +106,24 @@ private struct TogglePreviewTaskKey: EnvironmentKey {
     static let defaultValue: (@MainActor @Sendable (String) -> Void)? = nil
 }
 
+/// Footnote numbers for the document being previewed, resolved once per document so
+/// references deep inside lists, callouts, and tables share one numbering.
+private struct FootnoteNumbersKey: EnvironmentKey {
+    static let defaultValue: [String: Int] = [:]
+}
+
+/// Resolves `![[…]]` targets for the preview. Injected by the app shell so the preview
+/// stays a pure view and file access lives in `AppState`.
+private struct TransclusionResolverKey: EnvironmentKey {
+    static let defaultValue: (@MainActor (String, URL?) -> TransclusionContent)? = nil
+}
+
+/// Nesting depth of the transclusion currently being rendered; capped to keep a
+/// self-referential vault from rendering forever.
+private struct TransclusionDepthKey: EnvironmentKey {
+    static let defaultValue: Int = 0
+}
+
 extension EnvironmentValues {
     fileprivate var previewTheme: PreviewTheme {
         get { self[PreviewThemeKey.self] }
@@ -105,6 +134,21 @@ extension EnvironmentValues {
         get { self[TogglePreviewTaskKey.self] }
         set { self[TogglePreviewTaskKey.self] = newValue }
     }
+
+    fileprivate var footnoteNumbers: [String: Int] {
+        get { self[FootnoteNumbersKey.self] }
+        set { self[FootnoteNumbersKey.self] = newValue }
+    }
+
+    var transclusionResolver: (@MainActor (String, URL?) -> TransclusionContent)? {
+        get { self[TransclusionResolverKey.self] }
+        set { self[TransclusionResolverKey.self] = newValue }
+    }
+
+    fileprivate var transclusionDepth: Int {
+        get { self[TransclusionDepthKey.self] }
+        set { self[TransclusionDepthKey.self] = newValue }
+    }
 }
 
 private struct MarkdownBlockView: View {
@@ -114,6 +158,7 @@ private struct MarkdownBlockView: View {
 
     @Environment(\.previewTheme) private var theme
     @Environment(\.togglePreviewTask) private var onToggleTask
+    @Environment(\.footnoteNumbers) private var footnoteNumbers
 
     var body: some View {
         switch block {
@@ -181,7 +226,14 @@ private struct MarkdownBlockView: View {
     private func paragraph(_ text: String) -> some View {
         let inlines = MarkdownInlineParser(references: references).parse(text)
 
-        if let latex = displayMath(text) {
+        if let embed = soleEmbed(in: inlines) {
+            MarkdownTransclusionView(
+                target: embed.target,
+                label: embed.label,
+                references: references,
+                baseURL: baseURL
+            )
+        } else if let latex = displayMath(text) {
             mathBlock(latex)
         } else if let image = standaloneImage(in: inlines) {
             MarkdownImageView(
@@ -197,6 +249,26 @@ private struct MarkdownBlockView: View {
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// A paragraph that is only an embed becomes a transclusion card; an embed mixed
+    /// with other text keeps rendering inline.
+    private func soleEmbed(in inlines: [MarkdownInline]) -> (target: String, label: String)? {
+        var found: (target: String, label: String)?
+        for inline in inlines {
+            switch inline {
+            case .embed(let target, let label):
+                if found != nil { return nil }
+                found = (target, label)
+            case .text(let value) where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+                continue
+            case .softBreak, .hardBreak:
+                continue
+            default:
+                return nil
+            }
+        }
+        return found
     }
 
     /// Recognizes `$$ … $$` and `\\[ … \\]` paragraphs as display math.
@@ -393,7 +465,13 @@ private struct MarkdownBlockView: View {
     }
 
     private func inline(size: CGFloat) -> MarkdownInlineText {
-        MarkdownInlineText(references: references, baseURL: baseURL, size: size, theme: theme)
+        MarkdownInlineText(
+            references: references,
+            baseURL: baseURL,
+            size: size,
+            theme: theme,
+            footnoteNumbers: footnoteNumbers
+        )
     }
 
     private func headingSize(_ level: Int) -> CGFloat {
@@ -654,6 +732,7 @@ private struct MarkdownInlineText {
     let baseURL: URL?
     let size: CGFloat
     var theme: PreviewTheme = .system
+    var footnoteNumbers: [String: Int] = [:]
 
     func text(_ raw: String) -> Text {
         Text(attributed(MarkdownInlineParser(references: references).parse(raw)))
@@ -755,6 +834,28 @@ private struct MarkdownInlineText {
             case .wikiLink(let target, let label):
                 var run = AttributedString(label)
                 run.foregroundColor = .accentColor
+                if let url = wikiURL(for: target) {
+                    run.link = url
+                }
+                result.append(run)
+
+            case .footnoteReference(let label):
+                var run = AttributedString(
+                    footnoteNumbers[label].map { "\($0)" } ?? "[^\(label)]"
+                )
+                if footnoteNumbers[label] != nil {
+                    run.font = .system(size: max(8, size - 4), weight: .semibold)
+                    run.baselineOffset = size * 0.35
+                    run.foregroundColor = .accentColor
+                } else {
+                    run.foregroundColor = .secondary
+                }
+                result.append(run)
+
+            case .embed(let target, let label):
+                var run = AttributedString("\u{2937} \(label)")
+                run.foregroundColor = .accentColor
+                run.font = .system(size: size).italic()
                 if let url = wikiURL(for: target) {
                     run.link = url
                 }
@@ -1093,6 +1194,171 @@ extension MarkdownCalloutKind {
     }
 }
 
+/// An editable-in-place transclusion: the embedded note's own blocks render inside a
+/// card, with its link definitions and footnote numbering, and its heading opens the note.
+private struct MarkdownTransclusionView: View {
+    let target: String
+    let label: String
+    let references: [String: MarkdownLinkReference]
+    let baseURL: URL?
+
+    @Environment(\.previewTheme) private var theme
+    @Environment(\.transclusionResolver) private var resolver
+    @Environment(\.transclusionDepth) private var depth
+
+    var body: some View {
+        Group {
+            if depth >= 2 {
+                placeholder(
+                    "Embeds stop at two levels deep.",
+                    icon: "square.stack.3d.up.slash"
+                )
+            } else if let resolver {
+                content(for: resolver(target, baseURL))
+            } else {
+                placeholder(
+                    "Open this note from a vault folder to embed “\(label)”.",
+                    icon: "square.stack.3d.up"
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func content(for content: TransclusionContent) -> some View {
+        switch content {
+        case .markdown(let title, let text, let url):
+            let document = MarkdownBlockParser.parseDocument(text)
+            VStack(alignment: .leading, spacing: 8) {
+                header(title: title, url: url)
+
+                ForEach(Array(document.blocks.enumerated()), id: \.offset) { _, block in
+                    MarkdownBlockView(
+                        block: block,
+                        references: document.references,
+                        baseURL: url?.deletingLastPathComponent() ?? baseURL
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                let footnotes = MarkdownFootnoteIndex.orderedFootnotes(for: document)
+                if !footnotes.isEmpty {
+                    MarkdownFootnotesSection(
+                        entries: footnotes,
+                        references: document.references,
+                        baseURL: url?.deletingLastPathComponent() ?? baseURL
+                    )
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(theme.surface)
+            )
+            .overlay(alignment: .leading) {
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 7,
+                    bottomLeadingRadius: 7,
+                    bottomTrailingRadius: 0,
+                    topTrailingRadius: 0
+                )
+                .fill(Color.accentColor.opacity(0.55))
+                .frame(width: 3)
+            }
+            .environment(\.transclusionDepth, depth + 1)
+            .environment(\.footnoteNumbers, MarkdownFootnoteIndex.numbers(in: document))
+
+        case .image(let url):
+            VStack(alignment: .leading, spacing: 6) {
+                if let image = NSImage(contentsOf: url) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 320)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                Text(url.lastPathComponent)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 7).fill(theme.surface))
+
+        case .unresolved(let reason):
+            placeholder(reason, icon: "exclamationmark.triangle")
+        }
+    }
+
+    private func header(title: String, url: URL?) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "square.stack.3d.up")
+                .font(.system(size: 9, weight: .semibold))
+            if let url {
+                Button(title) {
+                    NSWorkspace.shared.open(url)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .semibold))
+            } else {
+                Text(title).font(.system(size: 11, weight: .semibold))
+            }
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(.secondary)
+    }
+
+    private func placeholder(_ message: String, icon: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+            Text(message)
+                .font(.system(size: 12))
+        }
+        .foregroundStyle(.secondary)
+        .padding(.vertical, 7)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 6).fill(theme.surface))
+    }
+}
+
+/// The footnote list that closes a previewed document.
+private struct MarkdownFootnotesSection: View {
+    let entries: [(number: Int, footnote: MarkdownFootnote)]
+    let references: [String: MarkdownLinkReference]
+    let baseURL: URL?
+    @Environment(\.previewTheme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            ForEach(entries, id: \.footnote.id) { entry in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\(entry.number).")
+                        .font(.system(size: 12, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 18, alignment: .trailing)
+                    MarkdownInlineText(
+                        references: references,
+                        baseURL: baseURL,
+                        size: 12.5,
+                        theme: theme
+                    )
+                    .text(entry.footnote.text)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.top, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Footnotes")
+    }
+}
+
 private struct MarkdownTablePreview: View {
     let header: [String]
     let alignments: [MarkdownTableAlignment]
@@ -1100,6 +1366,7 @@ private struct MarkdownTablePreview: View {
     let references: [String: MarkdownLinkReference]
     let baseURL: URL?
     var theme: PreviewTheme = .system
+    @Environment(\.footnoteNumbers) private var footnoteNumbers
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1136,7 +1403,13 @@ private struct MarkdownTablePreview: View {
 
     @ViewBuilder
     private func cell(_ text: String, alignment: MarkdownTableAlignment, isHeader: Bool) -> some View {
-        MarkdownInlineText(references: references, baseURL: baseURL, size: 13, theme: theme)
+        MarkdownInlineText(
+            references: references,
+            baseURL: baseURL,
+            size: 13,
+            theme: theme,
+            footnoteNumbers: footnoteNumbers
+        )
             .text(text)
             .font(.system(size: 13, weight: isHeader ? .semibold : .regular))
             .frame(maxWidth: .infinity, alignment: frameAlignment(alignment))
