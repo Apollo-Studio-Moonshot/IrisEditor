@@ -228,6 +228,8 @@ struct EditorSettings: Codable, Equatable {
     var editingMode: EditingMode = .standard
 
     // Sidebar
+    /// Width of the unified sidebar in points, remembered across launches.
+    var sidebarWidth: Double = EditorSettings.defaultSidebarWidth
     /// Which listing the files pane shows: folded tree, recent notes, or all notes.
     var vaultFileListing: VaultFileListing = .tree
     var vaultFileSort: VaultFileSort = .name
@@ -246,6 +248,9 @@ struct EditorSettings: Codable, Equatable {
     var aiConfiguration = AIProviderConfiguration()
 
     static let defaultFontSize: Double = 14
+    static let defaultSidebarWidth: Double = 250
+    /// Keeps the sidebar wide enough for note titles while leaving room for the editor.
+    static let sidebarWidthRange: ClosedRange<Double> = 210...440
 
     static let fontFamilies = [
         "SF Mono", "Menlo", "Monaco", "Courier New",
@@ -290,7 +295,8 @@ struct EditorSettings: Codable, Equatable {
         case showLineNumbers, wordWrap, appearance, accent, accentHex, previewTheme
         case typewriterMode, focusMode, smartTableNavigation, wikiAutocomplete
         case editingMode, disabledPluginIDs, keybindingOverrides, aiConfiguration
-        case vaultFileListing, vaultFileSort, vaultFileSortAscending, collapsedSidebarFolders
+        case sidebarWidth, vaultFileListing, vaultFileSort, vaultFileSortAscending
+        case collapsedSidebarFolders
     }
 
     init(from decoder: Decoder) throws {
@@ -336,6 +342,14 @@ struct EditorSettings: Codable, Equatable {
             AIProviderConfiguration.self,
             forKey: .aiConfiguration
         ) ?? defaults.aiConfiguration
+        sidebarWidth = min(
+            max(
+                try container.decodeIfPresent(Double.self, forKey: .sidebarWidth)
+                    ?? defaults.sidebarWidth,
+                EditorSettings.sidebarWidthRange.lowerBound
+            ),
+            EditorSettings.sidebarWidthRange.upperBound
+        )
         vaultFileListing = try container.decodeIfPresent(
             VaultFileListing.self,
             forKey: .vaultFileListing

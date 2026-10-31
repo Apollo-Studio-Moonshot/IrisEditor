@@ -7,23 +7,65 @@ struct SidebarView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.openWindow) private var openWindow
 
+    @FocusState private var isSearchFocused: Bool
+    @Namespace private var panePill
+    @State private var dragStartWidth: CGFloat?
+    @State private var isResizeHandleHovered = false
+    @State private var isVaultButtonHovered = false
+    @State private var isNewNoteHovered = false
+
+    private let cornerRadius: CGFloat = 18
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(spacing: 0) {
             header
+
             noteFilter
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
+
             panePicker
-            Divider()
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
+
+            hairline
+
             content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .id(appState.sidebarTab)
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .offset(y: 6)),
+                    removal: .opacity
+                ))
+
+            hairline
+
             footer
         }
-        .frame(width: 250)
-        .background {
-            GlassBackdrop(style: .regular, cornerRadius: 14, interactive: true)
-        }
-        .clipShape(.rect(cornerRadius: 14))
+        .frame(width: appState.sidebarWidth)
+        .background { SidebarGlassSurface(cornerRadius: cornerRadius) }
+        .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.7), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.38),
+                            Color(nsColor: .separatorColor).opacity(0.32),
+                            Color.white.opacity(0.06)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 0.8
+                )
+                .allowsHitTesting(false)
+        }
+        .overlay(alignment: .trailing) { resizeHandle }
+        .shadow(color: .black.opacity(0.18), radius: 18, x: 0, y: 10)
+        .animation(.snappy(duration: 0.22), value: appState.sidebarTab)
+        .onReceive(NotificationCenter.default.publisher(for: .focusSidebarSearch)) { _ in
+            isSearchFocused = true
         }
         .task {
             appState.refreshVaultIfNeeded()
@@ -33,13 +75,14 @@ struct SidebarView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 2) {
             Button {
                 appState.chooseVaultFolder()
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "folder.fill")
                         .font(.system(size: 10))
+                        .symbolRenderingMode(.hierarchical)
                     Text(vaultName)
                         .font(.system(size: 12, weight: .semibold))
                         .lineLimit(1)
@@ -49,53 +92,55 @@ struct SidebarView: View {
                         .foregroundStyle(.tertiary)
                 }
                 .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(Color.primary.opacity(isVaultButtonHovered ? 0.10 : 0.05))
+                }
+                .overlay {
+                    Capsule(style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.5)
+                }
             }
             .buttonStyle(.plain)
+            .onHover { isVaultButtonHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: isVaultButtonHovered)
             .help(L10n.chooseVaultFolder)
             .accessibilityLabel(L10n.chooseVaultFolder)
             .accessibilityIdentifier("Sidebar.ChooseVault")
 
             Spacer()
 
-            Button {
+            IconButton(
+                systemImage: "macwindow.on.rectangle",
+                label: L10n.graphWindowHelp,
+                identifier: "Sidebar.OpenGraphWindow"
+            ) {
                 openWindow(id: AppWindows.graph)
-            } label: {
-                Image(systemName: "macwindow.on.rectangle")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
             }
-            .buttonStyle(.borderless)
-            .help(L10n.graphWindowHelp)
             .accessibilityLabel(L10n.openGraphWindow)
-            .accessibilityIdentifier("Sidebar.OpenGraphWindow")
 
-            Button {
+            IconButton(
+                systemImage: "arrow.clockwise",
+                label: L10n.refreshVault,
+                identifier: "Sidebar.Refresh"
+            ) {
                 appState.refreshVaultIfNeeded()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
             }
-            .buttonStyle(.borderless)
-            .help(L10n.refreshVault)
-            .accessibilityLabel(L10n.refreshVault)
-            .accessibilityIdentifier("Sidebar.Refresh")
 
-            Button {
+            IconButton(
+                systemImage: "xmark",
+                label: L10n.closeSidebar,
+                identifier: "Sidebar.Close"
+            ) {
                 appState.toggleOutline()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
             }
-            .buttonStyle(.borderless)
-            .help(L10n.closeSidebar)
-            .accessibilityLabel(L10n.closeSidebar)
-            .accessibilityIdentifier("Sidebar.Close")
         }
-        .padding(.horizontal, 12)
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
         .padding(.top, 10)
-        .padding(.bottom, 6)
+        .padding(.bottom, 8)
     }
 
     private var vaultName: String {
@@ -105,35 +150,61 @@ struct SidebarView: View {
     // MARK: Filter
 
     private var noteFilter: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 9.5))
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(isSearchFocused ? Color.accentColor : Color.secondary)
 
             SidebarSearchField(
                 text: $appState.sidebarSearchQuery,
-                placeholder: L10n.searchNotes
+                placeholder: L10n.searchNotes,
+                focus: $isSearchFocused
             )
             .frame(height: 16)
 
             if !appState.sidebarSearchQuery.isEmpty {
                 Button {
-                    appState.clearSidebarSearch()
+                    withAnimation(.snappy(duration: 0.18)) {
+                        appState.clearSidebarSearch()
+                    }
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 9.5))
+                        .font(.system(size: 10))
+                        .symbolRenderingMode(.hierarchical)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
                 .accessibilityLabel(L10n.clearNoteSearch)
                 .accessibilityIdentifier("Sidebar.ClearSearch")
+            } else if isSearchFocused {
+                Text("esc")
+                    .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(.quaternary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background {
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(Color.primary.opacity(0.06))
+                    }
+                    .transition(.opacity)
             }
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
-        .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 7))
         .padding(.horizontal, 8)
-        .padding(.bottom, 6)
+        .padding(.vertical, 5)
+        .background {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.primary.opacity(isSearchFocused ? 0.09 : 0.05))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(
+                    isSearchFocused ? Color.accentColor.opacity(0.55) : Color.white.opacity(0.12),
+                    lineWidth: isSearchFocused ? 1 : 0.5
+                )
+        }
+        .animation(.easeOut(duration: 0.16), value: isSearchFocused)
+        .animation(.snappy(duration: 0.18), value: appState.sidebarSearchQuery.isEmpty)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("Sidebar.Search")
     }
@@ -141,35 +212,26 @@ struct SidebarView: View {
     // MARK: Panes
 
     private var panePicker: some View {
-        HStack(spacing: 1) {
+        HStack(spacing: 2) {
             ForEach(VaultPane.allCases) { pane in
-                Button {
+                SidebarPaneButton(
+                    pane: pane,
+                    isSelected: appState.sidebarTab == pane,
+                    namespace: panePill
+                ) {
                     appState.setSidebarPane(pane)
-                } label: {
-                    Image(systemName: pane.systemImage)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(appState.sidebarTab == pane
-                                      ? Color.accentColor.opacity(0.16)
-                                      : Color.clear)
-                        }
-                        .foregroundStyle(appState.sidebarTab == pane
-                                         ? Color.accentColor
-                                         : Color(nsColor: .secondaryLabelColor))
-                        .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
-                .help(pane.title)
-                .accessibilityLabel(pane.title)
-                .accessibilityValue(appState.sidebarTab == pane ? L10n.selected : L10n.notSelected)
-                .accessibilityIdentifier("Sidebar.\(pane.rawValue)")
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.bottom, 6)
+        .padding(2)
+        .background {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.primary.opacity(0.045))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
+        }
     }
 
     @ViewBuilder
@@ -193,71 +255,184 @@ struct SidebarView: View {
     // MARK: Footer
 
     private var footer: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 2) {
             Button {
                 appState.createNote()
             } label: {
-                Label(L10n.newNote, systemImage: "square.and.pencil")
-                    .font(.system(size: 11))
+                HStack(spacing: 5) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 10))
+                        .symbolRenderingMode(.hierarchical)
+                    Text(L10n.newNote)
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(Color.primary.opacity(isNewNoteHovered ? 0.10 : 0.05))
+                }
+                .overlay {
+                    Capsule(style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+                }
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .onHover { isNewNoteHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: isNewNoteHovered)
             .accessibilityLabel(L10n.newNote)
             .accessibilityIdentifier("Sidebar.NewNote")
 
-            Button {
+            IconButton(
+                systemImage: appState.isCurrentNoteStarred ? "star.fill" : "star",
+                label: appState.isCurrentNoteStarred ? L10n.unstarNote : L10n.starNote,
+                identifier: "Sidebar.ToggleStar",
+                tint: appState.isCurrentNoteStarred ? .yellow : nil
+            ) {
                 appState.toggleStarForCurrentNote()
-            } label: {
-                Image(systemName: appState.isCurrentNoteStarred ? "star.fill" : "star")
-                    .font(.system(size: 10))
-                    .foregroundStyle(appState.isCurrentNoteStarred ? Color.yellow : Color.secondary)
             }
-            .buttonStyle(.borderless)
             .disabled(appState.document.fileURL == nil)
-            .help(appState.isCurrentNoteStarred ? L10n.unstarNote : L10n.starNote)
-            .accessibilityLabel(appState.isCurrentNoteStarred ? L10n.unstarNote : L10n.starNote)
-            .accessibilityIdentifier("Sidebar.ToggleStar")
 
             Spacer()
 
             if appState.document.fileURL != nil {
-                Button {
+                IconButton(
+                    systemImage: "archivebox",
+                    label: L10n.archiveNote,
+                    identifier: "Sidebar.ArchiveNote"
+                ) {
                     appState.archiveCurrentFile()
-                } label: {
-                    Image(systemName: "archivebox")
-                        .font(.system(size: 10))
                 }
-                .buttonStyle(.borderless)
-                .help(L10n.archiveNote)
-                .accessibilityLabel(L10n.archiveNote)
-                .accessibilityIdentifier("Sidebar.ArchiveNote")
 
-                Button {
+                IconButton(
+                    systemImage: "pencil",
+                    label: L10n.renameNote,
+                    identifier: "Sidebar.RenameNote"
+                ) {
                     appState.renameCurrentFile()
-                } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 10))
                 }
-                .buttonStyle(.borderless)
-                .help(L10n.renameNote)
-                .accessibilityLabel(L10n.renameNote)
-                .accessibilityIdentifier("Sidebar.RenameNote")
 
-                Button {
+                IconButton(
+                    systemImage: "trash",
+                    label: L10n.deleteNote,
+                    identifier: "Sidebar.DeleteNote"
+                ) {
                     appState.deleteCurrentFile()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 10))
                 }
-                .buttonStyle(.borderless)
-                .help(L10n.deleteNote)
-                .accessibilityLabel(L10n.deleteNote)
-                .accessibilityIdentifier("Sidebar.DeleteNote")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: Chrome helpers
+
+    /// A hairline that fades into the glass at both ends instead of a hard rule.
+    private var hairline: some View {
+        SidebarHairline()
+    }
+
+    /// Invisible grab strip on the trailing edge. Dragging resizes the sidebar, a
+    /// floating readout shows the live width, and a double-click restores the default.
+    private var resizeHandle: some View {
+        ZStack {
+            Capsule(style: .continuous)
+                .fill(Color.primary.opacity(isResizeHandleHovered || dragStartWidth != nil ? 0.28 : 0.001))
+                .frame(width: 3, height: 36)
+
+            if dragStartWidth != nil {
+                Text("\(Int(appState.sidebarWidth))")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background {
+                        Capsule(style: .continuous)
+                            .fill(.regularMaterial)
+                    }
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.24), lineWidth: 0.5)
+                    }
+                    .shadow(color: .black.opacity(0.22), radius: 5, y: 2)
+                    .offset(y: -46)
+                    .allowsHitTesting(false)
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+            }
+        }
+        .frame(width: 9, height: 88)
+        .contentShape(.rect)
+        .onHover { hovering in
+            isResizeHandleHovered = hovering
+            if hovering {
+                NSCursor.resizeLeftRight.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: isResizeHandleHovered)
+        .animation(.snappy(duration: 0.18), value: dragStartWidth == nil)
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    if dragStartWidth == nil {
+                        dragStartWidth = appState.sidebarWidth
+                    }
+                    let start = dragStartWidth ?? appState.sidebarWidth
+                    appState.sidebarWidth = start + value.translation.width
+                }
+                .onEnded { _ in
+                    dragStartWidth = nil
+                }
+        )
+        .onTapGesture(count: 2) {
+            withAnimation(.snappy(duration: 0.22)) {
+                appState.resetSidebarWidth()
+            }
+        }
+        .help(L10n.resizeSidebar)
+        .accessibilityLabel(L10n.resizeSidebar)
+        .accessibilityIdentifier("Sidebar.ResizeHandle")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: appState.sidebarWidth += 16
+            case .decrement: appState.sidebarWidth -= 16
+            @unknown default: break
+            }
+        }
+    }
+}
+
+// MARK: - Glass
+
+/// Layered Liquid Glass surface: the native glass material plus a faint top sheen and
+/// accent aura so the panel reads as a curved, refractive volume rather than a flat card.
+private struct SidebarGlassSurface: View {
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        ZStack {
+            GlassBackdrop(style: .regular, cornerRadius: cornerRadius, interactive: true)
+
+            RadialGradient(
+                colors: [Color.accentColor.opacity(0.10), .clear],
+                center: .topTrailing,
+                startRadius: 0,
+                endRadius: 240
+            )
+
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(0.10),
+                    .clear,
+                    Color.black.opacity(0.05)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -268,22 +443,144 @@ struct SidebarView: View {
 private struct SidebarSearchField: View {
     @Binding var text: String
     let placeholder: String
-
-    @FocusState private var isFocused: Bool
+    var focus: FocusState<Bool>.Binding
 
     var body: some View {
         TextField(placeholder, text: $text)
             .textFieldStyle(.plain)
-            .font(.system(size: 11))
-            .focused($isFocused)
-            .onReceive(NotificationCenter.default.publisher(for: .focusSidebarSearch)) { _ in
-                isFocused = true
+            .font(.system(size: 11.5))
+            .focused(focus)
+            .onExitCommand {
+                if text.isEmpty {
+                    focus.wrappedValue = false
+                } else {
+                    text = ""
+                }
             }
             .onSubmit {
-                isFocused = false
+                focus.wrappedValue = false
             }
             .accessibilityLabel(placeholder)
             .accessibilityIdentifier("Sidebar.SearchField")
+    }
+}
+
+// MARK: - Pane picker
+
+/// One icon in the segmented pane picker. The selected state is a shared glassy pill
+/// that slides between icons via `matchedGeometryEffect`.
+private struct SidebarPaneButton: View {
+    let pane: VaultPane
+    let isSelected: Bool
+    let namespace: Namespace.ID
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: pane.systemImage)
+                .font(.system(size: 11, weight: .medium))
+                .symbolVariant(isSelected ? .fill : .none)
+                .foregroundStyle(
+                    isSelected
+                        ? Color.accentColor
+                        : (isHovered ? Color.primary.opacity(0.85) : Color(nsColor: .secondaryLabelColor))
+                )
+                .frame(maxWidth: .infinity)
+                .frame(height: 26)
+                .background {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.16))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .strokeBorder(Color.accentColor.opacity(0.28), lineWidth: 0.5)
+                            }
+                            .matchedGeometryEffect(id: "pane-pill", in: namespace)
+                    } else if isHovered {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Color.primary.opacity(0.07))
+                    }
+                }
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .help(pane.title)
+        .accessibilityLabel(pane.title)
+        .accessibilityValue(isSelected ? L10n.selected : L10n.notSelected)
+        .accessibilityIdentifier("Sidebar.\(pane.rawValue)")
+    }
+}
+
+// MARK: - Shared row chrome
+
+/// Hairline separator that fades into the glass at both ends.
+private struct SidebarHairline: View {
+    var body: some View {
+        LinearGradient(
+            colors: [
+                .clear,
+                Color(nsColor: .separatorColor).opacity(0.55),
+                .clear
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+        .frame(height: 0.6)
+        .allowsHitTesting(false)
+    }
+}
+
+/// Selection fill and hover wash shared by the note, star, and list rows.
+private struct SidebarRowBackground: View {
+    let isSelected: Bool
+    let isHovered: Bool
+    var cornerRadius: CGFloat = 6
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(
+                isSelected
+                    ? AnyShapeStyle(LinearGradient(
+                        colors: [Color.accentColor.opacity(0.22), Color.accentColor.opacity(0.12)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+                    : AnyShapeStyle(Color.primary.opacity(isHovered ? 0.07 : 0))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? Color.accentColor.opacity(0.22) : Color.white.opacity(isHovered ? 0.08 : 0),
+                        lineWidth: 0.5
+                    )
+            }
+    }
+}
+
+/// Lightweight hover wash for rows that have no persistent selected state.
+private struct SidebarHoverHighlight: ViewModifier {
+    var cornerRadius: CGFloat = 6
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color.primary.opacity(isHovered ? 0.07 : 0))
+            }
+            .contentShape(.rect)
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+    }
+}
+
+private extension View {
+    func sidebarHoverHighlight(cornerRadius: CGFloat = 6) -> some View {
+        modifier(SidebarHoverHighlight(cornerRadius: cornerRadius))
     }
 }
 
@@ -348,25 +645,37 @@ private struct VaultFilesPane: View {
 
     private var listingBar: some View {
         HStack(spacing: 2) {
-            ForEach(VaultFileListing.allCases) { option in
-                Button {
-                    appState.setVaultFileListing(option)
-                } label: {
-                    Image(systemName: option.systemImage)
-                        .font(.system(size: 9.5, weight: .medium))
-                        .frame(width: 20, height: 18)
-                        .background {
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(listing == option ? Color.accentColor.opacity(0.14) : .clear)
-                        }
-                        .foregroundStyle(listing == option ? Color.accentColor : Color.secondary)
-                        .contentShape(.rect)
+            HStack(spacing: 2) {
+                ForEach(VaultFileListing.allCases) { option in
+                    Button {
+                        appState.setVaultFileListing(option)
+                    } label: {
+                        Image(systemName: option.systemImage)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .symbolVariant(listing == option ? .fill : .none)
+                            .frame(width: 22, height: 20)
+                            .background {
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .fill(listing == option ? Color.accentColor.opacity(0.16) : .clear)
+                            }
+                            .foregroundStyle(listing == option ? Color.accentColor : Color.secondary)
+                            .sidebarHoverHighlight(cornerRadius: 5)
+                    }
+                    .buttonStyle(.plain)
+                    .help(option.title)
+                    .accessibilityLabel(option.title)
+                    .accessibilityValue(listing == option ? L10n.selected : L10n.notSelected)
+                    .accessibilityIdentifier("Sidebar.Listing.\(option.rawValue)")
                 }
-                .buttonStyle(.plain)
-                .help(option.title)
-                .accessibilityLabel(option.title)
-                .accessibilityValue(listing == option ? L10n.selected : L10n.notSelected)
-                .accessibilityIdentifier("Sidebar.Listing.\(option.rawValue)")
+            }
+            .padding(2)
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.primary.opacity(0.04))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
             }
 
             Spacer(minLength: 4)
@@ -378,8 +687,10 @@ private struct VaultFilesPane: View {
                       ? "arrow.up"
                       : "arrow.down")
                     .font(.system(size: 8.5, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .sidebarHoverHighlight(cornerRadius: 6)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .foregroundStyle(.tertiary)
             .help(appState.settings.vaultFileSortAscending ? L10n.sortAscending : L10n.sortDescending)
             .accessibilityLabel(L10n.sortBy)
@@ -402,6 +713,8 @@ private struct VaultFilesPane: View {
             } label: {
                 Image(systemName: "line.3.horizontal.decrease")
                     .font(.system(size: 9.5, weight: .medium))
+                    .frame(width: 22, height: 22)
+                    .sidebarHoverHighlight(cornerRadius: 6)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -416,7 +729,7 @@ private struct VaultFilesPane: View {
             }
         }
         .padding(.horizontal, 8)
-        .padding(.bottom, 4)
+        .padding(.bottom, 6)
     }
 }
 
@@ -426,6 +739,8 @@ private struct NoteRow: View {
     var showsFolder: Bool = false
     var showsAge: Bool = false
     @EnvironmentObject private var appState: AppState
+
+    @State private var isHovered = false
 
     private var isCurrent: Bool {
         appState.document.fileURL?.standardizedFileURL == file.url.standardizedFileURL
@@ -437,8 +752,9 @@ private struct NoteRow: View {
             appState.refreshBacklinks()
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: "doc.text")
+                Image(systemName: isCurrent ? "doc.text.fill" : "doc.text")
                     .font(.system(size: 9))
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(isCurrent ? Color.accentColor : Color(nsColor: .tertiaryLabelColor))
                 VStack(alignment: .leading, spacing: 0.5) {
                     Text(file.title)
@@ -457,14 +773,16 @@ private struct NoteRow: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.vertical, 3.5)
             .background {
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(isCurrent ? Color.accentColor.opacity(0.13) : .clear)
+                SidebarRowBackground(isSelected: isCurrent, isHovered: isHovered)
             }
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.snappy(duration: 0.18), value: isCurrent)
         .contextMenu {
             noteMenu(for: file, appState: appState)
         }
@@ -510,44 +828,67 @@ private struct VaultFolderRow: View {
     let folder: VaultFolder
     @EnvironmentObject private var appState: AppState
 
-    private var isExpanded: Binding<Bool> {
-        Binding(
-            get: { appState.isFolderExpanded(folder.relativePath) },
-            set: { appState.setFolder(folder.relativePath, expanded: $0) }
-        )
+    @State private var isHovered = false
+
+    private var isExpanded: Bool {
+        appState.isFolderExpanded(folder.relativePath)
     }
 
     var body: some View {
         if folder.subfolders.isEmpty, folder.relativePath.isEmpty {
             fileList
         } else {
-            DisclosureGroup(isExpanded: isExpanded) {
-                VStack(alignment: .leading, spacing: 1) {
-                    fileList
-                    ForEach(folder.subfolders) { subfolder in
-                        VaultFolderRow(folder: subfolder)
+            VStack(alignment: .leading, spacing: 1) {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        appState.setFolder(folder.relativePath, expanded: !isExpanded)
                     }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        Image(systemName: isExpanded ? "folder.fill" : "folder")
+                            .font(.system(size: 10))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(.secondary)
+                        Text(displayName)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Text("\(folder.fileCount)")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(.quaternary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.primary.opacity(isHovered ? 0.06 : 0))
+                    }
+                    .contentShape(.rect)
                 }
-                .padding(.leading, 6)
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                    Text(displayName)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Text("\(folder.fileCount)")
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.quaternary)
-                }
+                .buttonStyle(.plain)
+                .onHover { isHovered = $0 }
+                .animation(.easeOut(duration: 0.12), value: isHovered)
+                .animation(.snappy(duration: 0.2), value: isExpanded)
                 .accessibilityLabel(displayName)
                 .accessibilityValue(L10n.files(folder.fileCount))
                 .accessibilityIdentifier("Sidebar.Folder.\(folder.relativePath)")
+
+                if isExpanded {
+                    VStack(alignment: .leading, spacing: 1) {
+                        fileList
+                        ForEach(folder.subfolders) { subfolder in
+                            VaultFolderRow(folder: subfolder)
+                        }
+                    }
+                    .padding(.leading, 8)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
-            .disclosureGroupStyle(.automatic)
         }
     }
 
@@ -605,7 +946,7 @@ private struct VaultStarsPane: View {
             }
 
             if !appState.currentVaultStars.isEmpty {
-                Divider()
+                SidebarHairline()
                 HStack {
                     Text(L10n.starredCount(appState.currentVaultStars.count))
                         .font(.system(size: 9.5))
@@ -630,6 +971,8 @@ private struct StarRow: View {
     let bookmark: VaultBookmark
     @EnvironmentObject private var appState: AppState
 
+    @State private var isHovered = false
+
     private var exists: Bool {
         FileManager.default.fileExists(atPath: bookmark.url.path)
     }
@@ -647,6 +990,7 @@ private struct StarRow: View {
             HStack(spacing: 5) {
                 Image(systemName: "star.fill")
                     .font(.system(size: 8))
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(Color.yellow.opacity(0.85))
                 VStack(alignment: .leading, spacing: 0.5) {
                     Text(bookmark.title)
@@ -670,14 +1014,16 @@ private struct StarRow: View {
                 }
             }
             .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.vertical, 3.5)
             .background {
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(isCurrent ? Color.accentColor.opacity(0.13) : .clear)
+                SidebarRowBackground(isSelected: isCurrent, isHovered: isHovered)
             }
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.snappy(duration: 0.18), value: isCurrent)
         .opacity(exists ? 1 : 0.55)
         .contextMenu {
             Button(L10n.removeStar) {
@@ -742,8 +1088,8 @@ private struct VaultTagsPane: View {
                                         .foregroundStyle(.tertiary)
                                 }
                                 .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .contentShape(.rect)
+                                .padding(.vertical, 4.5)
+                                .sidebarHoverHighlight(cornerRadius: 6)
                             }
                             .buttonStyle(.plain)
                             .contextMenu {
@@ -856,8 +1202,8 @@ private struct VaultBacklinksPane: View {
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 2)
-                    .contentShape(.rect)
+                    .padding(.vertical, 3)
+                    .sidebarHoverHighlight(cornerRadius: 6)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("Sidebar.Sibling.\(file.relativePath)")
@@ -887,6 +1233,8 @@ private struct BacklinkRow: View {
     let identifierPrefix: String
     @EnvironmentObject private var appState: AppState
 
+    @State private var isHovered = false
+
     var body: some View {
         Button {
             appState.open(url: link.sourceURL)
@@ -913,14 +1261,22 @@ private struct BacklinkRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
             .background {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(tinted
-                          ? Color.accentColor.opacity(0.07)
-                          : Color(nsColor: .quaternaryLabelColor).opacity(0.3))
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        tinted
+                            ? Color.accentColor.opacity(isHovered ? 0.12 : 0.07)
+                            : Color(nsColor: .quaternaryLabelColor).opacity(isHovered ? 0.45 : 0.28)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.white.opacity(isHovered ? 0.12 : 0.05), lineWidth: 0.5)
+                    }
             }
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
         .padding(.horizontal, 6)
         .contextMenu {
             Button(L10n.openInSecondPane) {
@@ -1035,10 +1391,20 @@ private struct EmptyPane: View {
     let message: String
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 22))
-                .foregroundStyle(.quaternary)
+        VStack(spacing: 9) {
+            ZStack {
+                Circle()
+                    .fill(Color.primary.opacity(0.045))
+                Circle()
+                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
+                Image(systemName: icon)
+                    .font(.system(size: 19, weight: .light))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(width: 44, height: 44)
+            .padding(.bottom, 1)
+
             Text(title)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.tertiary)
@@ -1046,6 +1412,7 @@ private struct EmptyPane: View {
                 .font(.system(size: 10.5))
                 .foregroundStyle(.quaternary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(20)
@@ -1053,22 +1420,32 @@ private struct EmptyPane: View {
     }
 }
 
-/// Small borderless icon button shared across the sidebar rows.
+/// Small borderless icon button shared across the sidebar chrome and rows.
 private struct IconButton: View {
     let systemImage: String
     let label: String
     let identifier: String
+    var tint: Color? = nil
     let action: () -> Void
+
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 9.5, weight: .medium))
-                .frame(width: 18, height: 18)
+                .font(.system(size: 10, weight: .medium))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(tint ?? (isHovered ? Color.primary : Color.secondary))
+                .frame(width: 22, height: 22)
+                .background {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(isHovered ? 0.09 : 0))
+                }
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
         .help(label)
         .accessibilityLabel(label)
         .accessibilityIdentifier(identifier)

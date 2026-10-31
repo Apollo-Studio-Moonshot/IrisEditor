@@ -148,6 +148,7 @@ enum L10n {
     static let searchAllNotes = NSLocalizedString("Search All Notes…", comment: "Menu item opening vault search")
     static let dailyNote = NSLocalizedString("Daily Note", comment: "Menu item opening today's daily note")
     static let sidebarMenu = NSLocalizedString("Sidebar", comment: "Submenu selecting the sidebar pane")
+    static let resizeSidebar = NSLocalizedString("Resize Sidebar", comment: "Accessibility label for the sidebar width drag handle")
     static let insertTemplate = NSLocalizedString("Insert Template", comment: "Submenu inserting a vault template")
     static let noTemplates = NSLocalizedString("No templates in /Templates", comment: "Disabled item when the templates folder is empty")
     static let chooseVaultFolderMenu = NSLocalizedString("Choose Vault Folder…", comment: "Menu item choosing the vault root")

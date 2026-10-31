@@ -1752,6 +1752,27 @@ final class AppState: ObservableObject {
 
     // MARK: - Sidebar: folders
 
+    /// Current sidebar width, clamped so the editor always keeps usable room.
+    var sidebarWidth: CGFloat {
+        get {
+            CGFloat(min(
+                max(settings.sidebarWidth, EditorSettings.sidebarWidthRange.lowerBound),
+                EditorSettings.sidebarWidthRange.upperBound
+            ))
+        }
+        set {
+            settings.sidebarWidth = min(
+                max(Double(newValue), EditorSettings.sidebarWidthRange.lowerBound),
+                EditorSettings.sidebarWidthRange.upperBound
+            )
+        }
+    }
+
+    /// Restores the default width, used by double-clicking the resize handle.
+    func resetSidebarWidth() {
+        settings.sidebarWidth = EditorSettings.defaultSidebarWidth
+    }
+
     /// Whether a folder section is open in the files pane. The vault root is open by default.
     func isFolderExpanded(_ relativePath: String) -> Bool {
         !settings.collapsedSidebarFolders.contains(relativePath)
