@@ -142,9 +142,16 @@ Select the **IrisEditor** scheme and run. The project includes the app target, t
 catalog with the app icon and accent color. For a command-line build:
 
 ```sh
-xcodebuild -project IrisEditor.xcodeproj -scheme IrisEditor -configuration Debug \
-  -derivedDataPath .build/xcode-derived build
+xcodebuild -project IrisEditor.xcodeproj -scheme IrisEditor -configuration Debug build
 ```
+
+> Keep DerivedData out of the repository. Xcode resolves a DerivedData tree inside the
+> package root as a package target and its `.build/artifacts` as a binary artifact, so
+> `GenerateAssetSymbols` fails with *"You don't have permission to save the file
+> GeneratedAssetSymbols.swift"* (`Operation not permitted`) and the link step follows.
+> `swift build` owns `.build/` at the root, so point `-derivedDataPath` outside the
+> repository instead, and run `scripts/clean_build_inputs.sh` to relocate a tree that is
+> already there.
 
 ### Swift Package Manager
 
@@ -171,7 +178,7 @@ In Xcode, press `⌘U` (the shared scheme includes the test target). From the co
 ```sh
 swift test
 # or
-xcodebuild -project IrisEditor.xcodeproj -scheme IrisEditor -derivedDataPath .build/xcode-derived test
+xcodebuild -project IrisEditor.xcodeproj -scheme IrisEditor test
 ```
 
 > Note: with Command Line Tools only (no full Xcode), the Swift Testing macro plugin is
@@ -295,7 +302,8 @@ IrisEditor/
 │   ├── obsidian-feature-inventory.md # Verified Obsidian 1.14 feature inventory
 │   └── positioning.md                # Parity ledger and differentiation bets
 └── scripts/
-    └── build_app_bundle.sh           # Wrap the release binary in a signed .app
+    ├── build_app_bundle.sh           # Wrap the release binary in a signed .app
+    └── clean_build_inputs.sh         # Relocate DerivedData left inside the project
 ```
 
 ## Architecture Notes

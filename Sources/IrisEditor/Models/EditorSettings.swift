@@ -227,6 +227,15 @@ struct EditorSettings: Codable, Equatable {
     var wikiAutocomplete: Bool = true
     var editingMode: EditingMode = .standard
 
+    // Sidebar
+    /// Which listing the files pane shows: folded tree, recent notes, or all notes.
+    var vaultFileListing: VaultFileListing = .tree
+    var vaultFileSort: VaultFileSort = .name
+    /// Ascending order for the name sort; date and size sorts start newest/largest first.
+    var vaultFileSortAscending: Bool = true
+    /// Folder sections expanded in the files pane, keyed by relative path.
+    var collapsedSidebarFolders: [String] = []
+
     // Plugins
     var disabledPluginIDs: [String] = []
 
@@ -281,6 +290,7 @@ struct EditorSettings: Codable, Equatable {
         case showLineNumbers, wordWrap, appearance, accent, accentHex, previewTheme
         case typewriterMode, focusMode, smartTableNavigation, wikiAutocomplete
         case editingMode, disabledPluginIDs, keybindingOverrides, aiConfiguration
+        case vaultFileListing, vaultFileSort, vaultFileSortAscending, collapsedSidebarFolders
     }
 
     init(from decoder: Decoder) throws {
@@ -326,6 +336,22 @@ struct EditorSettings: Codable, Equatable {
             AIProviderConfiguration.self,
             forKey: .aiConfiguration
         ) ?? defaults.aiConfiguration
+        vaultFileListing = try container.decodeIfPresent(
+            VaultFileListing.self,
+            forKey: .vaultFileListing
+        ) ?? defaults.vaultFileListing
+        vaultFileSort = try container.decodeIfPresent(
+            VaultFileSort.self,
+            forKey: .vaultFileSort
+        ) ?? defaults.vaultFileSort
+        vaultFileSortAscending = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .vaultFileSortAscending
+        ) ?? defaults.vaultFileSortAscending
+        collapsedSidebarFolders = try container.decodeIfPresent(
+            [String].self,
+            forKey: .collapsedSidebarFolders
+        ) ?? defaults.collapsedSidebarFolders
     }
 
     static func load() -> EditorSettings {

@@ -1,16 +1,20 @@
 import AppKit
 import SwiftUI
 
-/// Unified Liquid Glass sidebar for the vault: files, outline, tags, backlinks, and graph.
+/// Unified Liquid Glass sidebar for the vault: files, outline, tags, backlinks, stars
+/// and a graph mini-map, plus a persistent note filter shared by every pane.
 struct SidebarView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            noteFilter
             panePicker
             Divider()
             content
+            footer
         }
         .frame(width: 250)
         .background {
@@ -25,6 +29,8 @@ struct SidebarView: View {
             appState.refreshVaultIfNeeded()
         }
     }
+
+    // MARK: Header
 
     private var header: some View {
         HStack(spacing: 6) {
@@ -50,6 +56,18 @@ struct SidebarView: View {
             .accessibilityIdentifier("Sidebar.ChooseVault")
 
             Spacer()
+
+            Button {
+                openWindow(id: AppWindows.graph)
+            } label: {
+                Image(systemName: "macwindow.on.rectangle")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.borderless)
+            .help(L10n.graphWindowHelp)
+            .accessibilityLabel(L10n.openGraphWindow)
+            .accessibilityIdentifier("Sidebar.OpenGraphWindow")
 
             Button {
                 appState.refreshVaultIfNeeded()
@@ -84,14 +102,52 @@ struct SidebarView: View {
         appState.effectiveVaultRoot?.lastPathComponent ?? L10n.noVault
     }
 
+    // MARK: Filter
+
+    private var noteFilter: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 9.5))
+                .foregroundStyle(.tertiary)
+
+            SidebarSearchField(
+                text: $appState.sidebarSearchQuery,
+                placeholder: L10n.searchNotes
+            )
+            .frame(height: 16)
+
+            if !appState.sidebarSearchQuery.isEmpty {
+                Button {
+                    appState.clearSidebarSearch()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 9.5))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .accessibilityLabel(L10n.clearNoteSearch)
+                .accessibilityIdentifier("Sidebar.ClearSearch")
+            }
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 7))
+        .padding(.horizontal, 8)
+        .padding(.bottom, 6)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("Sidebar.Search")
+    }
+
+    // MARK: Panes
+
     private var panePicker: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 1) {
             ForEach(VaultPane.allCases) { pane in
                 Button {
                     appState.setSidebarPane(pane)
                 } label: {
                     Image(systemName: pane.systemImage)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 5)
                         .background {
@@ -103,6 +159,7 @@ struct SidebarView: View {
                         .foregroundStyle(appState.sidebarTab == pane
                                          ? Color.accentColor
                                          : Color(nsColor: .secondaryLabelColor))
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .help(pane.title)
@@ -111,7 +168,7 @@ struct SidebarView: View {
                 .accessibilityIdentifier("Sidebar.\(pane.rawValue)")
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 6)
         .padding(.bottom, 6)
     }
 
@@ -126,9 +183,107 @@ struct SidebarView: View {
             VaultTagsPane()
         case .backlinks:
             VaultBacklinksPane()
+        case .stars:
+            VaultStarsPane()
         case .graph:
             VaultGraphPane()
         }
+    }
+
+    // MARK: Footer
+
+    private var footer: some View {
+        HStack(spacing: 6) {
+            Button {
+                appState.createNote()
+            } label: {
+                Label(L10n.newNote, systemImage: "square.and.pencil")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel(L10n.newNote)
+            .accessibilityIdentifier("Sidebar.NewNote")
+
+            Button {
+                appState.toggleStarForCurrentNote()
+            } label: {
+                Image(systemName: appState.isCurrentNoteStarred ? "star.fill" : "star")
+                    .font(.system(size: 10))
+                    .foregroundStyle(appState.isCurrentNoteStarred ? Color.yellow : Color.secondary)
+            }
+            .buttonStyle(.borderless)
+            .disabled(appState.document.fileURL == nil)
+            .help(appState.isCurrentNoteStarred ? L10n.unstarNote : L10n.starNote)
+            .accessibilityLabel(appState.isCurrentNoteStarred ? L10n.unstarNote : L10n.starNote)
+            .accessibilityIdentifier("Sidebar.ToggleStar")
+
+            Spacer()
+
+            if appState.document.fileURL != nil {
+                Button {
+                    appState.archiveCurrentFile()
+                } label: {
+                    Image(systemName: "archivebox")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.borderless)
+                .help(L10n.archiveNote)
+                .accessibilityLabel(L10n.archiveNote)
+                .accessibilityIdentifier("Sidebar.ArchiveNote")
+
+                Button {
+                    appState.renameCurrentFile()
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.borderless)
+                .help(L10n.renameNote)
+                .accessibilityLabel(L10n.renameNote)
+                .accessibilityIdentifier("Sidebar.RenameNote")
+
+                Button {
+                    appState.deleteCurrentFile()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.borderless)
+                .help(L10n.deleteNote)
+                .accessibilityLabel(L10n.deleteNote)
+                .accessibilityIdentifier("Sidebar.DeleteNote")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+}
+
+// MARK: - Search field
+
+/// Plain-text field styled for the sidebar. `TextField` inside the glass chrome keeps
+/// focus behaviour native while staying visually inline.
+private struct SidebarSearchField: View {
+    @Binding var text: String
+    let placeholder: String
+
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 11))
+            .focused($isFocused)
+            .onReceive(NotificationCenter.default.publisher(for: .focusSidebarSearch)) { _ in
+                isFocused = true
+            }
+            .onSubmit {
+                isFocused = false
+            }
+            .accessibilityLabel(placeholder)
+            .accessibilityIdentifier("Sidebar.SearchField")
     }
 }
 
@@ -137,8 +292,23 @@ struct SidebarView: View {
 private struct VaultFilesPane: View {
     @EnvironmentObject private var appState: AppState
 
+    private var listing: VaultFileListing {
+        appState.settings.vaultFileListing
+    }
+
+    private var files: [VaultFile] {
+        switch listing {
+        case .tree, .all:
+            return appState.sidebarFilteredFiles
+        case .recent:
+            return appState.recentVaultFiles
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            listingBar
+
             if appState.vaultFiles.isEmpty {
                 EmptyPane(
                     icon: "folder",
@@ -147,76 +317,211 @@ private struct VaultFilesPane: View {
                         ? L10n.noNotesMessage
                         : L10n.emptyVaultMessage
                 )
+            } else if files.isEmpty {
+                EmptyPane(
+                    icon: "magnifyingglass",
+                    title: L10n.noSearchResults,
+                    message: L10n.noSearchResultsHint
+                )
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
-                        VaultFolderRow(folder: VaultScanner.folderTree(files: appState.vaultFiles))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 4)
+                        switch listing {
+                        case .tree:
+                            VaultFolderRow(folder: VaultScanner.folderTree(files: files))
+                        case .all:
+                            ForEach(files) { file in
+                                NoteRow(file: file, showsFolder: true)
+                            }
+                        case .recent:
+                            ForEach(files.prefix(30)) { file in
+                                NoteRow(file: file, showsFolder: true, showsAge: true)
+                            }
+                        }
                     }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
                 }
             }
+        }
+    }
 
-            Divider()
-            HStack(spacing: 6) {
+    private var listingBar: some View {
+        HStack(spacing: 2) {
+            ForEach(VaultFileListing.allCases) { option in
                 Button {
-                    appState.createNote()
+                    appState.setVaultFileListing(option)
                 } label: {
-                    Label(L10n.newNote, systemImage: "square.and.pencil")
-                        .font(.system(size: 11))
+                    Image(systemName: option.systemImage)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .frame(width: 20, height: 18)
+                        .background {
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(listing == option ? Color.accentColor.opacity(0.14) : .clear)
+                        }
+                        .foregroundStyle(listing == option ? Color.accentColor : Color.secondary)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(L10n.newNote)
-                .accessibilityIdentifier("Sidebar.NewNote")
-
-                Spacer()
-
-                if appState.document.fileURL != nil {
-                    Button {
-                        appState.renameCurrentFile()
-                    } label: {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 10))
-                    }
-                    .buttonStyle(.borderless)
-                    .help(L10n.renameNote)
-                    .accessibilityLabel(L10n.renameNote)
-                    .accessibilityIdentifier("Sidebar.RenameNote")
-
-                    Button {
-                        appState.deleteCurrentFile()
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 10))
-                    }
-                    .buttonStyle(.borderless)
-                    .help(L10n.deleteNote)
-                    .accessibilityLabel(L10n.deleteNote)
-                    .accessibilityIdentifier("Sidebar.DeleteNote")
-                }
+                .help(option.title)
+                .accessibilityLabel(option.title)
+                .accessibilityValue(listing == option ? L10n.selected : L10n.notSelected)
+                .accessibilityIdentifier("Sidebar.Listing.\(option.rawValue)")
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+
+            Spacer(minLength: 4)
+
+            Button {
+                appState.toggleVaultFileSortDirection()
+            } label: {
+                Image(systemName: appState.settings.vaultFileSortAscending
+                      ? "arrow.up"
+                      : "arrow.down")
+                    .font(.system(size: 8.5, weight: .semibold))
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.tertiary)
+            .help(appState.settings.vaultFileSortAscending ? L10n.sortAscending : L10n.sortDescending)
+            .accessibilityLabel(L10n.sortBy)
+            .accessibilityIdentifier("Sidebar.SortDirection")
+
+            Menu {
+                Picker(L10n.sortBy, selection: Binding(
+                    get: { appState.settings.vaultFileSort },
+                    set: { appState.setVaultFileSort($0) }
+                )) {
+                    ForEach(VaultFileSort.allCases) { sort in
+                        Label(sort.title, systemImage: sort.systemImage).tag(sort)
+                    }
+                }
+                Divider()
+                Button(L10n.collapseAll) { appState.collapseAllFolders() }
+                    .disabled(listing != .tree)
+                Button(L10n.expandAll) { appState.expandAllFolders() }
+                    .disabled(listing != .tree)
+            } label: {
+                Image(systemName: "line.3.horizontal.decrease")
+                    .font(.system(size: 9.5, weight: .medium))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .foregroundStyle(.secondary)
+            .help(L10n.sortBy)
+            .accessibilityLabel(L10n.columnMenu)
+            .accessibilityIdentifier("Sidebar.FilesMenu")
+
+            IconButton(systemImage: "plus", label: L10n.newNote, identifier: "Sidebar.FilesNewNote") {
+                appState.createNote()
+            }
         }
+        .padding(.horizontal, 8)
+        .padding(.bottom, 4)
+    }
+}
+
+/// One note row used by the flat listings.
+private struct NoteRow: View {
+    let file: VaultFile
+    var showsFolder: Bool = false
+    var showsAge: Bool = false
+    @EnvironmentObject private var appState: AppState
+
+    private var isCurrent: Bool {
+        appState.document.fileURL?.standardizedFileURL == file.url.standardizedFileURL
+    }
+
+    var body: some View {
+        Button {
+            appState.open(url: file.url)
+            appState.refreshBacklinks()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 9))
+                    .foregroundStyle(isCurrent ? Color.accentColor : Color(nsColor: .tertiaryLabelColor))
+                VStack(alignment: .leading, spacing: 0.5) {
+                    Text(file.title)
+                        .font(.system(size: 11.5, weight: isCurrent ? .semibold : .regular))
+                        .foregroundStyle(isCurrent ? .primary : .secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if showsFolder {
+                        Text(subtitle)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.quaternary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isCurrent ? Color.accentColor.opacity(0.13) : .clear)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            noteMenu(for: file, appState: appState)
+        }
+        .help(file.relativePath)
+        .accessibilityLabel(file.title)
+        .accessibilityValue(file.relativePath)
+        .accessibilityIdentifier("Sidebar.File.\(file.relativePath)")
+    }
+
+    private var subtitle: String {
+        if showsAge {
+            let age = file.modified.formatted(.relative(presentation: .named))
+            let folder = (file.relativePath as NSString).deletingLastPathComponent
+            return folder.isEmpty ? age : "\(folder) · \(age)"
+        }
+        return (file.relativePath as NSString).deletingLastPathComponent
+    }
+}
+
+/// Shared context menu for a note, used by every listing.
+@MainActor
+@ViewBuilder
+private func noteMenu(for file: VaultFile, appState: AppState) -> some View {
+    Button(L10n.openInSecondPane) {
+        appState.openInSecondPane(url: file.url)
+    }
+    Button(appState.isStarred(file.url) ? L10n.unstarNote : L10n.starNote) {
+        appState.toggleStar(for: file.url, title: file.title)
+    }
+    Divider()
+    Button(L10n.copyWikiLink) {
+        appState.copyWikiLink(to: file.url)
+    }
+    Button(L10n.showInFinder) {
+        NSWorkspace.shared.activateFileViewerSelecting([file.url])
+    }
+    Button(L10n.moveToTrash) {
+        appState.moveToTrash(url: file.url)
     }
 }
 
 private struct VaultFolderRow: View {
     let folder: VaultFolder
     @EnvironmentObject private var appState: AppState
-    @State private var isExpanded: Bool
 
-    init(folder: VaultFolder) {
-        self.folder = folder
-        _isExpanded = State(initialValue: folder.relativePath.isEmpty)
+    private var isExpanded: Binding<Bool> {
+        Binding(
+            get: { appState.isFolderExpanded(folder.relativePath) },
+            set: { appState.setFolder(folder.relativePath, expanded: $0) }
+        )
     }
 
     var body: some View {
         if folder.subfolders.isEmpty, folder.relativePath.isEmpty {
             fileList
         } else {
-            DisclosureGroup(isExpanded: $isExpanded) {
+            DisclosureGroup(isExpanded: isExpanded) {
                 VStack(alignment: .leading, spacing: 1) {
                     fileList
                     ForEach(folder.subfolders) { subfolder in
@@ -229,67 +534,165 @@ private struct VaultFolderRow: View {
                     Image(systemName: "folder")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                    Text(folder.relativePath.isEmpty
-                         ? (appState.effectiveVaultRoot?.lastPathComponent ?? L10n.vault)
-                         : folder.name)
+                    Text(displayName)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text("\(folder.fileCount)")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.quaternary)
                 }
-                .accessibilityLabel(folder.relativePath.isEmpty
-                                    ? (appState.effectiveVaultRoot?.lastPathComponent ?? L10n.vault)
-                                    : folder.name)
-                .accessibilityValue(L10n.files(folder.files.count))
+                .accessibilityLabel(displayName)
+                .accessibilityValue(L10n.files(folder.fileCount))
                 .accessibilityIdentifier("Sidebar.Folder.\(folder.relativePath)")
             }
             .disclosureGroupStyle(.automatic)
         }
     }
 
+    private var displayName: String {
+        folder.relativePath.isEmpty
+            ? (appState.effectiveVaultRoot?.lastPathComponent ?? L10n.vault)
+            : folder.name
+    }
+
     @ViewBuilder
     private var fileList: some View {
         ForEach(folder.files) { file in
-            Button {
-                appState.open(url: file.url)
-                appState.refreshBacklinks()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 9))
-                        .foregroundStyle(isCurrent(file) ? Color.accentColor : Color(nsColor: .tertiaryLabelColor))
-                    Text(file.title)
-                        .font(.system(size: 11.5, weight: isCurrent(file) ? .semibold : .regular))
-                        .foregroundStyle(isCurrent(file) ? .primary : .secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background {
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(isCurrent(file) ? Color.accentColor.opacity(0.13) : .clear)
-                }
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .contextMenu {
-                Button(L10n.openInSecondPane) {
-                    appState.openInSecondPane(url: file.url)
-                }
-                Button(L10n.showInFinder) {
-                    NSWorkspace.shared.activateFileViewerSelecting([file.url])
-                }
-            }
-            .help(file.relativePath)
-            .accessibilityLabel(file.title)
-            .accessibilityValue(file.relativePath)
-            .accessibilityIdentifier("Sidebar.File.\(file.relativePath)")
+            NoteRow(file: file, showsFolder: false)
+        }
+    }
+}
+
+// MARK: - Stars
+
+private struct VaultStarsPane: View {
+    @EnvironmentObject private var appState: AppState
+
+    private var matches: [VaultBookmark] {
+        let query = appState.sidebarSearchQuery.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return appState.currentVaultStars }
+        return appState.currentVaultStars.filter {
+            "\($0.title) \($0.folder)".lowercased().contains(query)
         }
     }
 
-    private func isCurrent(_ file: VaultFile) -> Bool {
-        appState.document.fileURL?.standardizedFileURL == file.url.standardizedFileURL
+    var body: some View {
+        VStack(spacing: 0) {
+            if appState.currentVaultStars.isEmpty {
+                EmptyPane(
+                    icon: "star",
+                    title: L10n.noStarredNotes,
+                    message: L10n.starNotesHint
+                )
+            } else if matches.isEmpty {
+                EmptyPane(
+                    icon: "magnifyingglass",
+                    title: L10n.noSearchResults,
+                    message: L10n.noSearchResultsHint
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(matches) { bookmark in
+                            StarRow(bookmark: bookmark)
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                }
+            }
+
+            if !appState.currentVaultStars.isEmpty {
+                Divider()
+                HStack {
+                    Text(L10n.starredCount(appState.currentVaultStars.count))
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.quaternary)
+                    Spacer()
+                    Button(L10n.clearStarred) {
+                        appState.clearStars()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityIdentifier("Sidebar.ClearStars")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+            }
+        }
+    }
+}
+
+private struct StarRow: View {
+    let bookmark: VaultBookmark
+    @EnvironmentObject private var appState: AppState
+
+    private var exists: Bool {
+        FileManager.default.fileExists(atPath: bookmark.url.path)
+    }
+
+    private var isCurrent: Bool {
+        appState.document.fileURL?.standardizedFileURL == bookmark.url.standardizedFileURL
+    }
+
+    var body: some View {
+        Button {
+            guard exists else { return }
+            appState.open(url: bookmark.url)
+            appState.refreshBacklinks()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(Color.yellow.opacity(0.85))
+                VStack(alignment: .leading, spacing: 0.5) {
+                    Text(bookmark.title)
+                        .font(.system(size: 11.5, weight: isCurrent ? .semibold : .regular))
+                        .foregroundStyle(exists ? (isCurrent ? .primary : .secondary) : .tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if !bookmark.folder.isEmpty {
+                        Text(bookmark.folder)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.quaternary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+                if !exists {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 8.5))
+                        .foregroundStyle(.tertiary)
+                        .help(L10n.missingNote)
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isCurrent ? Color.accentColor.opacity(0.13) : .clear)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .opacity(exists ? 1 : 0.55)
+        .contextMenu {
+            Button(L10n.removeStar) {
+                appState.removeStar(for: bookmark.url)
+            }
+            if exists {
+                Button(L10n.showInFinder) {
+                    NSWorkspace.shared.activateFileViewerSelecting([bookmark.url])
+                }
+            }
+        }
+        .help(bookmark.url.path)
+        .accessibilityLabel(bookmark.title)
+        .accessibilityValue(L10n.openNotePath(bookmark.url.lastPathComponent))
+        .accessibilityIdentifier("Sidebar.Star.\(bookmark.id)")
     }
 }
 
@@ -297,6 +700,12 @@ private struct VaultFolderRow: View {
 
 private struct VaultTagsPane: View {
     @EnvironmentObject private var appState: AppState
+
+    private var tags: [VaultTag] {
+        let query = appState.sidebarSearchQuery.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return appState.vaultTags }
+        return appState.vaultTags.filter { $0.name.lowercased().contains(query) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -306,11 +715,19 @@ private struct VaultTagsPane: View {
                     title: L10n.noTagsYet,
                     message: L10n.addTagsHint
                 )
+            } else if tags.isEmpty {
+                EmptyPane(
+                    icon: "magnifyingglass",
+                    title: L10n.noSearchResults,
+                    message: L10n.noSearchResultsHint
+                )
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(appState.vaultTags) { tag in
+                        ForEach(tags) { tag in
                             Button {
+                                appState.setSidebarPane(.files)
+                                appState.sidebarSearchQuery = ""
                                 appState.vaultSearchQuery = "#\(tag.name)"
                                 appState.showVaultSearch = true
                             } label: {
@@ -329,6 +746,9 @@ private struct VaultTagsPane: View {
                                 .contentShape(.rect)
                             }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                tagMenu(for: tag, appState: appState)
+                            }
                             .accessibilityLabel("#\(tag.name)")
                             .accessibilityValue(L10n.notes(tag.count))
                             .accessibilityIdentifier("Sidebar.Tag.\(tag.name)")
@@ -339,6 +759,21 @@ private struct VaultTagsPane: View {
             }
         }
         .accessibilityIdentifier("Sidebar.tags")
+    }
+
+    /// Filter the vault search by `tag`, or copy its `#tag` text.
+    @MainActor
+    @ViewBuilder
+    private func tagMenu(for tag: VaultTag, appState: AppState) -> some View {
+        Button(L10n.filterByTag(tag.name)) {
+            appState.sidebarSearchQuery = ""
+            appState.vaultSearchQuery = "#\(tag.name)"
+            appState.showVaultSearch = true
+        }
+        Button(L10n.copyTag) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("#\(tag.name)", forType: .string)
+        }
     }
 }
 
@@ -355,98 +790,146 @@ private struct VaultBacklinksPane: View {
                     title: L10n.saveToSeeBacklinks,
                     message: L10n.saveToSeeBacklinksHint
                 )
-            } else if appState.vaultBacklinks.isEmpty {
-                EmptyPane(
-                    icon: "arrow.triangle.branch",
-                    title: L10n.noBacklinks,
-                    message: L10n.backlinksHint(appState.document.displayName)
-                )
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        Text(L10n.linkedNotes(appState.vaultBacklinks.count))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 10)
-                            .padding(.top, 8)
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        if !appState.vaultBacklinks.isEmpty {
+                            sectionHeading(L10n.backlinksSection, count: appState.vaultBacklinks.count)
+                            ForEach(appState.vaultBacklinks) { link in
+                                BacklinkRow(link: link, tinted: false, identifierPrefix: "Sidebar.Backlink")
+                            }
+                        }
 
                         if !appState.vaultUnlinkedMentions.isEmpty {
-                            Text(L10n.unlinkedMentionsTitle)
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(.tertiary)
-                                .padding(.horizontal, 10)
-                                .padding(.top, 10)
-
-                            Text(L10n.unlinkedMentions(appState.vaultUnlinkedMentions.count))
-                                .font(.system(size: 9.5))
-                                .foregroundStyle(.tertiary)
-                                .padding(.horizontal, 10)
-
+                            sectionHeading(L10n.unlinkedMentionsTitle, count: appState.vaultUnlinkedMentions.count)
+                                .padding(.top, 4)
                             ForEach(appState.vaultUnlinkedMentions) { link in
-                                Button {
-                                    appState.open(url: link.sourceURL)
-                                    appState.reveal(line: link.line)
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(link.sourceTitle)
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(.primary)
-                                            .lineLimit(1)
-                                        Text(link.excerpt)
-                                            .font(.system(size: 10.5))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(2)
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(8)
-                                    .background {
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color.accentColor.opacity(0.07))
-                                    }
-                                    .contentShape(.rect)
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.horizontal, 6)
-                                .accessibilityLabel(link.sourceTitle)
-                                .accessibilityValue(link.excerpt)
-                                .accessibilityIdentifier("Sidebar.UnlinkedMention.\(link.sourceURL.lastPathComponent)")
+                                BacklinkRow(link: link, tinted: true, identifierPrefix: "Sidebar.UnlinkedMention")
                             }
                         }
 
-                        ForEach(appState.vaultBacklinks) { link in
-                            Button {
-                                appState.open(url: link.sourceURL)
-                                appState.reveal(line: link.line)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(link.sourceTitle)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(1)
-                                    Text(link.excerpt)
-                                        .font(.system(size: 10.5))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(8)
-                                .background {
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color(nsColor: .quaternaryLabelColor).opacity(0.3))
-                                }
-                                .contentShape(.rect)
+                        if appState.vaultBacklinks.isEmpty, appState.vaultUnlinkedMentions.isEmpty {
+                            VStack(spacing: 8) {
+                                Image(systemName: "arrow.triangle.branch")
+                                    .font(.system(size: 22))
+                                    .foregroundStyle(.quaternary)
+                                Text(L10n.noBacklinks)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.tertiary)
+                                Text(L10n.backlinksHint(appState.document.displayName))
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.quaternary)
+                                    .multilineTextAlignment(.center)
                             }
-                            .buttonStyle(.plain)
-                            .padding(.horizontal, 6)
-                            .accessibilityLabel(link.sourceTitle)
-                            .accessibilityValue(link.excerpt)
-                            .accessibilityIdentifier("Sidebar.Backlink.\(link.sourceURL.lastPathComponent)")
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 40)
                         }
+
+                        siblingsSection
                     }
                     .padding(.bottom, 8)
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var siblingsSection: some View {
+        let siblings = appState.siblingNotes
+        if !siblings.isEmpty {
+            sectionHeading(L10n.siblingNotes, count: siblings.count)
+                .padding(.top, 4)
+            ForEach(siblings.prefix(12)) { file in
+                Button {
+                    appState.open(url: file.url)
+                    appState.refreshBacklinks()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                        Text(file.title)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 2)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("Sidebar.Sibling.\(file.relativePath)")
+            }
+        }
+    }
+
+    private func sectionHeading(_ title: String, count: Int) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .tracking(0.5)
+            Text("\(count)")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.quaternary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 6)
+    }
+}
+
+private struct BacklinkRow: View {
+    let link: VaultBacklink
+    let tinted: Bool
+    let identifierPrefix: String
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        Button {
+            appState.open(url: link.sourceURL)
+            appState.reveal(line: link.line)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(link.sourceTitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text("\(link.line)")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.quaternary)
+                }
+                if !link.excerpt.isEmpty {
+                    Text(link.excerpt)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(tinted
+                          ? Color.accentColor.opacity(0.07)
+                          : Color(nsColor: .quaternaryLabelColor).opacity(0.3))
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .contextMenu {
+            Button(L10n.openInSecondPane) {
+                appState.openInSecondPane(url: link.sourceURL)
+            }
+        }
+        .accessibilityLabel(link.sourceTitle)
+        .accessibilityValue(link.excerpt)
+        .accessibilityIdentifier("\(identifierPrefix).\(link.sourceURL.lastPathComponent)")
     }
 }
 
@@ -454,6 +937,8 @@ private struct VaultBacklinksPane: View {
 
 private struct VaultGraphPane: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.openWindow) private var openWindow
+    @State private var selectedNodeID: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -467,7 +952,7 @@ private struct VaultGraphPane: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .padding(.horizontal, 8)
-            .padding(.top, 8)
+            .padding(.bottom, 6)
             .accessibilityIdentifier("Sidebar.GraphScope")
 
             if appState.vaultGraph.nodes.isEmpty {
@@ -477,80 +962,68 @@ private struct VaultGraphPane: View {
                     message: L10n.noLocalGraphHint
                 )
             } else {
-                LocalGraphView(graph: appState.vaultGraph) { path in
-                    appState.open(url: URL(fileURLWithPath: path))
-                }
-                .padding(8)
-                .frame(maxWidth: .infinity, maxHeight: 320)
+                GraphCanvasView(
+                    graph: appState.vaultGraph,
+                    showsLabels: appState.vaultGraph.nodes.count <= 22,
+                    interactive: true,
+                    selectedNodeID: $selectedNodeID
+                )
+                .padding(.horizontal, 6)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                Text("\(appState.vaultGraph.nodes.count) notes · \(appState.vaultGraph.edges.count) links")
-                    .font(.system(size: 10))
+                if let selected = appState.vaultGraph.nodes.first(where: { $0.id == selectedNodeID }) {
+                    selectedNodeCard(selected)
+                }
+
+                HStack(spacing: 6) {
+                    Text(L10n.graphStats(
+                        nodes: appState.vaultGraph.nodes.count,
+                        links: appState.vaultGraph.edges.count
+                    ))
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.quaternary)
+                    Spacer(minLength: 0)
+                    Button {
+                        openWindow(id: AppWindows.graph)
+                    } label: {
+                        Image(systemName: "arrow.up.forward.app")
+                            .font(.system(size: 9.5))
+                    }
+                    .buttonStyle(.plain)
                     .foregroundStyle(.tertiary)
-                    .padding(.bottom, 8)
+                    .help(L10n.graphWindowHelp)
+                    .accessibilityLabel(L10n.openGraphWindow)
+                    .accessibilityIdentifier("Sidebar.GraphExpand")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
             }
         }
     }
-}
 
-private struct LocalGraphView: View {
-    let graph: VaultGraph
-    var onSelect: (String) -> Void
-
-    var body: some View {
-        GeometryReader { geometry in
-            let positions = layout(in: geometry.size)
-            Canvas { context, _ in
-                for edge in graph.edges {
-                    guard let from = positions[edge.source],
-                          let to = positions[edge.target] else { continue }
-                    var path = Path()
-                    path.move(to: from)
-                    path.addLine(to: to)
-                    context.stroke(path, with: .color(.secondary.opacity(0.35)), lineWidth: 1)
-                }
-
-                for node in graph.nodes {
-                    guard let point = positions[node.id] else { continue }
-                    let radius: CGFloat = node.isCurrent ? 17 : 11
-                    let rect = CGRect(
-                        x: point.x - radius,
-                        y: point.y - radius,
-                        width: radius * 2,
-                        height: radius * 2
-                    )
-                    let color: Color = node.isCurrent ? .accentColor : Color(nsColor: .secondaryLabelColor)
-                    context.fill(Path(ellipseIn: rect), with: .color(color.opacity(node.isCurrent ? 0.85 : 0.45)))
-                    context.stroke(Path(ellipseIn: rect), with: .color(color), lineWidth: 1)
-
-                    let label = Text(node.title)
-                        .font(.system(size: node.isCurrent ? 10 : 9, weight: node.isCurrent ? .semibold : .regular))
-                        .foregroundStyle(.secondary)
-                    context.draw(label, at: CGPoint(x: point.x, y: point.y + radius + 8))
-                }
+    private func selectedNodeCard(_ node: VaultGraphNode) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+            Text(node.title)
+                .font(.system(size: 10.5, weight: .medium))
+                .lineLimit(1)
+            Text(L10n.linkedNotes(node.linkCount))
+                .font(.system(size: 9))
+                .foregroundStyle(.quaternary)
+            Spacer(minLength: 0)
+            Button(L10n.graphOpenNote) {
+                appState.open(url: URL(fileURLWithPath: node.id))
+                selectedNodeID = nil
             }
-            .contentShape(.rect)
+            .buttonStyle(.plain)
+            .font(.system(size: 9.5))
+            .foregroundStyle(.tint)
+            .accessibilityIdentifier("Sidebar.GraphOpen")
         }
-        .accessibilityLabel("Local note graph")
-    }
-
-    private func layout(in size: CGSize) -> [String: CGPoint] {
-        let center = CGPoint(x: size.width / 2, y: size.height / 2)
-        let others = graph.nodes.filter { !$0.isCurrent }
-        let radius = max(36, min(size.width, size.height) / 2 - 34)
-        var result: [String: CGPoint] = [:]
-
-        if let current = graph.nodes.first(where: { $0.isCurrent }) {
-            result[current.id] = center
-        }
-
-        for (index, node) in others.enumerated() {
-            let angle = (Double(index) / Double(max(1, others.count))) * 2 * .pi - .pi / 2
-            result[node.id] = CGPoint(
-                x: center.x + CGFloat(cos(angle)) * radius,
-                y: center.y + CGFloat(sin(angle)) * radius
-            )
-        }
-        return result
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
     }
 }
 
@@ -576,5 +1049,28 @@ private struct EmptyPane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(20)
+        .accessibilityIdentifier("Sidebar.Empty.\(title)")
+    }
+}
+
+/// Small borderless icon button shared across the sidebar rows.
+private struct IconButton: View {
+    let systemImage: String
+    let label: String
+    let identifier: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 9.5, weight: .medium))
+                .frame(width: 18, height: 18)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(label)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier)
     }
 }

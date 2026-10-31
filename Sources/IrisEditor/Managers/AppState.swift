@@ -152,6 +152,15 @@ final class AppState: ObservableObject {
     @Published var vaultSearchQuery = ""
     @Published private(set) var vaultSearchResults: [VaultSearchResult] = []
 
+    /// Filter text for the sidebar's compact note search, kept separate from vault search.
+    @Published var sidebarSearchQuery = ""
+
+    /// Notes the user starred from the sidebar, newest first.
+    @Published private(set) var starredNotes: [VaultBookmark] = BookmarkStore.load()
+
+    /// Standalone graph window state; the window itself is opened through `openWindow`.
+    @Published var graphWindowRequested = false
+
     // MARK: - Wiki autocomplete
 
     @Published var showWikiSuggestions = false
@@ -1535,6 +1544,316 @@ final class AppState: ObservableObject {
         refreshBacklinks()
     }
 
+    // MARK: - Graph window
+
+    /// Requests the standalone graph window. The request flag lets menu commands,
+    /// the command palette and the sidebar all funnel through `openWindow`.
+    func requestGraphWindow() {
+        graphWindowRequested = true
+    }
+
+    func consumeGraphWindowRequest() {
+        graphWindowRequested = false
+    }
+
+    /// Builds the graph a window should draw, honouring its own scope/filter settings.
+    func buildGraph(scope: GraphScope, depth: Int, limit: Int) -> VaultGraph {
+        let current = document.fileURL
+        switch scope {
+        case .vault:
+            return VaultScanner.graph(around: nil, in: vaultFiles, depth: depth, limit: limit, highlighting: current)
+        case .local:
+            return VaultScanner.graph(around: current, in: vaultFiles, depth: depth, limit: limit, highlighting: current)
+        }
+    }
+
+    /// Opens a note from the graph and closes the standalone window when asked.
+    func openFromGraph(url: URL) {
+        open(url: url)
+        refreshBacklinks()
+    }
+
+    // MARK: - Sidebar: search
+
+    /// Notes in the sidebar filter, newest edits first so the list stays useful.
+    var sidebarFilteredFiles: [VaultFile] {
+        let query = sidebarSearchQuery.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return sortedFiles(vaultFiles) }
+        let needles = query.lowercased().split(separator: " ").map(String.init)
+        return sortedFiles(vaultFiles).filter { file in
+            let haystack = file.relativePath.lowercased()
+            return needles.allSatisfy { haystack.contains($0) }
+        }
+    }
+
+    func clearSidebarSearch() {
+        sidebarSearchQuery = ""
+    }
+
+    /// Orders files for the sidebar according to the saved sort settings.
+    func sortedFiles(_ files: [VaultFile]) -> [VaultFile] {
+        let ascending = settings.vaultFileSortAscending
+        let sort = settings.vaultFileSort
+        return files.sorted { lhs, rhs in
+            let ordered: Bool
+            switch sort {
+            case .name:
+                let comparison = lhs.relativePath.localizedStandardCompare(rhs.relativePath)
+                if comparison == .orderedSame { return false }
+                ordered = comparison == .orderedAscending
+            case .modified:
+                ordered = lhs.modified < rhs.modified
+            case .created:
+                let left = creationDate(of: lhs.url)
+                let right = creationDate(of: rhs.url)
+                if left == right { return false }
+                ordered = left < right
+            case .size:
+                let left = fileSize(of: lhs.url)
+                let right = fileSize(of: rhs.url)
+                if left == right { return false }
+                ordered = left < right
+            }
+            return ascending ? ordered : !ordered
+        }
+    }
+
+    /// Notes edited most recently first, for the Recent listing.
+    var recentVaultFiles: [VaultFile] {
+        sidebarFilteredFiles.sorted { $0.modified > $1.modified }
+    }
+
+    /// Notes sharing the current note's folder, excluding the note itself.
+    var siblingNotes: [VaultFile] {
+        guard let url = document.fileURL, let root = effectiveVaultRoot else { return [] }
+        let folder = VaultScanner.relativeDirectory(of: url, in: root)
+        return sortedFiles(vaultFiles).filter { file in
+            file.url.standardizedFileURL != url.standardizedFileURL
+                && VaultScanner.relativeDirectory(of: file.url, in: root) == folder
+        }
+    }
+
+    /// Stars belonging to the active vault, newest first.
+    var currentVaultStars: [VaultBookmark] {
+        guard let root = effectiveVaultRoot?.standardizedFileURL else { return starredNotes }
+        return starredNotes.filter { $0.vaultRoot?.standardizedFileURL == root }
+    }
+
+    private func creationDate(of url: URL) -> Date {
+        let values = try? url.resourceValues(forKeys: [.creationDateKey])
+        return values?.creationDate ?? .distantPast
+    }
+
+    private func fileSize(of url: URL) -> Int {
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+        return values?.fileSize ?? 0
+    }
+
+    // MARK: - Sidebar: stars
+
+    /// Whether the current document is starred in the active vault.
+    var isCurrentNoteStarred: Bool {
+        BookmarkStore.contains(document.fileURL, in: effectiveVaultRoot, in: starredNotes)
+    }
+
+    /// Stars or unstars the current (saved) note.
+    func toggleStarForCurrentNote() {
+        guard let url = document.fileURL else {
+            presentInfo(
+                "Save the note first",
+                message: "Starred notes point at a file on disk, so save this note before starring it."
+            )
+            return
+        }
+        if isCurrentNoteStarred {
+            removeStar(for: url)
+        } else {
+            star(url: url, title: document.displayName)
+        }
+    }
+
+    /// Whether `url` is starred.
+    func isStarred(_ url: URL) -> Bool {
+        BookmarkStore.contains(url, in: effectiveVaultRoot, in: starredNotes)
+    }
+
+    /// Stars `url`, or removes the star when it is already starred.
+    func toggleStar(for url: URL, title: String? = nil) {
+        if isStarred(url) {
+            removeStar(for: url)
+        } else {
+            star(url: url, title: title)
+        }
+    }
+
+    func star(url: URL, title: String? = nil) {
+        let bookmark = VaultBookmark(
+            url: url.standardizedFileURL,
+            vaultRoot: effectiveVaultRoot?.standardizedFileURL,
+            title: title ?? url.deletingPathExtension().lastPathComponent,
+            added: Date()
+        )
+        starredNotes = BookmarkStore.adding(bookmark, to: starredNotes)
+        BookmarkStore.save(starredNotes)
+    }
+
+    func removeStar(for url: URL) {
+        let updated = BookmarkStore.removing(url, from: starredNotes)
+        guard updated.count != starredNotes.count else { return }
+        starredNotes = updated
+        BookmarkStore.save(starredNotes)
+    }
+
+    /// Drops stars whose file was deleted outside the app.
+    func pruneStars() {
+        let pruned = BookmarkStore.prune(starredNotes)
+        guard pruned.count != starredNotes.count else { return }
+        starredNotes = pruned
+        BookmarkStore.save(starredNotes)
+    }
+
+    func clearStars() {
+        guard !starredNotes.isEmpty else { return }
+        starredNotes = []
+        BookmarkStore.save(starredNotes)
+    }
+
+    // MARK: - Sidebar: note actions
+
+    /// Copies an `[[wiki link]]` to `url`, relative to the vault when possible.
+    func copyWikiLink(to url: URL) {
+        let target = effectiveVaultRoot.map { VaultScanner.relativePath(of: url, in: $0) }
+            ?? url.deletingPathExtension().lastPathComponent + "." + url.pathExtension
+        let link = "[[\((target as NSString).deletingPathExtension)]]"
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(link, forType: .string)
+    }
+
+    /// Moves `url` to the Trash and closes it if it is open in this window.
+    func moveToTrash(url: URL) {
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        } catch {
+            presentError("Couldn’t move the note to the Trash.", error: error)
+            return
+        }
+        let standardized = url.standardizedFileURL
+        if document.fileURL?.standardizedFileURL == standardized {
+            // The file is gone; don't prompt to save it on close.
+            document.isDirty = false
+        }
+        if let index = tabs.firstIndex(where: { $0.fileURL?.standardizedFileURL == standardized }) {
+            closeTab(at: index)
+        }
+        removeStar(for: standardized)
+        refreshVault()
+    }
+
+    // MARK: - Sidebar: folders
+
+    /// Whether a folder section is open in the files pane. The vault root is open by default.
+    func isFolderExpanded(_ relativePath: String) -> Bool {
+        !settings.collapsedSidebarFolders.contains(relativePath)
+    }
+
+    func setFolder(_ relativePath: String, expanded: Bool) {
+        var collapsed = settings.collapsedSidebarFolders
+        if expanded {
+            collapsed.removeAll { $0 == relativePath }
+        } else if !collapsed.contains(relativePath) {
+            collapsed.append(relativePath)
+        }
+        guard collapsed != settings.collapsedSidebarFolders else { return }
+        settings.collapsedSidebarFolders = collapsed
+        settings.save()
+    }
+
+    func toggleFolder(_ relativePath: String) {
+        setFolder(relativePath, expanded: !isFolderExpanded(relativePath))
+    }
+
+    /// Collapses every folder below the vault root.
+    func collapseAllFolders() {
+        settings.collapsedSidebarFolders = allFolderPaths().filter { !$0.isEmpty }
+        settings.save()
+    }
+
+    func expandAllFolders() {
+        settings.collapsedSidebarFolders = []
+        settings.save()
+    }
+
+    private func allFolderPaths() -> [String] {
+        var paths: [String] = []
+        func walk(_ folder: VaultFolder) {
+            paths.append(folder.relativePath)
+            folder.subfolders.forEach(walk)
+        }
+        walk(VaultScanner.folderTree(files: vaultFiles))
+        return paths
+    }
+
+    func setVaultFileListing(_ listing: VaultFileListing) {
+        guard settings.vaultFileListing != listing else { return }
+        settings.vaultFileListing = listing
+        settings.save()
+    }
+
+    func setVaultFileSort(_ sort: VaultFileSort, ascending: Bool? = nil) {
+        settings.vaultFileSort = sort
+        if let ascending {
+            settings.vaultFileSortAscending = ascending
+        } else {
+            // Dates and sizes read best newest/largest first; names read best A→Z.
+            settings.vaultFileSortAscending = (sort == .name)
+        }
+        settings.save()
+    }
+
+    func toggleVaultFileSortDirection() {
+        settings.vaultFileSortAscending.toggle()
+        settings.save()
+    }
+
+    /// Moves the current note to the vault's Trash folder instead of deleting it.
+    func archiveCurrentFile() {
+        guard let root = effectiveVaultRoot, let url = document.fileURL else {
+            presentInfo(
+                "No vault folder",
+                message: "Choose a vault folder before archiving notes."
+            )
+            return
+        }
+        guard let fileName = promptForName(
+            title: "Archive Note",
+            placeholder: "Name in the Trash folder",
+            initial: url.deletingPathExtension().lastPathComponent
+        ) else { return }
+
+        let trashFolder = root.appendingPathComponent(".trash", isDirectory: true)
+        var destination = trashFolder
+            .appendingPathComponent(fileName)
+            .appendingPathExtension(MarkdownFileType.defaultExtension)
+        var counter = 2
+        while FileManager.default.fileExists(atPath: destination.path) {
+            destination = trashFolder
+                .appendingPathComponent("\(fileName) \(counter)")
+                .appendingPathExtension(MarkdownFileType.defaultExtension)
+            counter += 1
+        }
+
+        do {
+            try FileManager.default.createDirectory(at: trashFolder, withIntermediateDirectories: true)
+            try FileManager.default.moveItem(at: url, to: destination)
+            document.isDirty = false
+            closeTab(at: currentTabIndex)
+            refreshVault()
+        } catch {
+            presentError("Couldn’t archive the note.", error: error)
+        }
+    }
+
     func chooseVaultFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -2213,4 +2532,6 @@ extension Notification.Name {
     static let keybindingOverrideApplied = Notification.Name("IrisEditor.keybindingOverrideApplied")
     static let editorModeDidChange = Notification.Name("IrisEditor.editorModeDidChange")
     static let resetEditorMode = Notification.Name("IrisEditor.resetEditorMode")
+    /// Asks the sidebar to focus its note filter field.
+    static let focusSidebarSearch = Notification.Name("IrisEditor.focusSidebarSearch")
 }

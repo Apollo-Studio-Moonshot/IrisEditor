@@ -39,6 +39,63 @@ enum L10n {
     static let edited = NSLocalizedString("Edited", comment: "Status bar label for unsaved changes")
     static let utf8 = NSLocalizedString("UTF-8", comment: "Status bar encoding label")
 
+    // MARK: - Sidebar
+
+    static let searchNotes = NSLocalizedString("Search notes", comment: "Placeholder in the sidebar search field")
+    static let clearNoteSearch = NSLocalizedString("Clear note search", comment: "Accessibility label for clearing the sidebar search field")
+    static let noSearchResults = NSLocalizedString("No matching notes", comment: "Empty state title when the sidebar search finds nothing")
+    static let columnMenu = NSLocalizedString("Sidebar options", comment: "Accessibility label for the sidebar options menu")
+    static let groupByFolder = NSLocalizedString("Group by Folder", comment: "Sidebar files option grouping notes by folder")
+    static let showAllNotes = NSLocalizedString("All Notes", comment: "Sidebar files option listing every note flat")
+    static let showRecentNotes = NSLocalizedString("Recent Notes", comment: "Sidebar files option listing recently edited notes")
+    static let sortBy = NSLocalizedString("Sort By", comment: "Sidebar files submenu choosing the sort order")
+    static let sortAscending = NSLocalizedString("Ascending", comment: "Sidebar files sort direction: ascending")
+    static let sortDescending = NSLocalizedString("Descending", comment: "Sidebar files sort direction: descending")
+    static let collapseAll = NSLocalizedString("Collapse All", comment: "Sidebar files button folding every folder")
+    static let expandAll = NSLocalizedString("Expand All", comment: "Sidebar files button unfolding every folder")
+    static let recentSection = NSLocalizedString("RECENTLY EDITED", comment: "Sidebar section heading for recently edited notes")
+    static let editBelowHeader = NSLocalizedString("Edit in split", comment: "Sidebar action opening a note beside the current one")
+    static let starNote = NSLocalizedString("Star Note", comment: "Sidebar action starring the current note")
+    static let unstarNote = NSLocalizedString("Unstar Note", comment: "Sidebar action removing the current note's star")
+    static let starredNotes = NSLocalizedString("Starred", comment: "Sidebar pane title listing starred notes")
+    static let noStarredNotes = NSLocalizedString("No starred notes", comment: "Empty state title in the starred pane")
+    static let starNotesHint = NSLocalizedString("Star a note with ⌘⇧S to keep it here.", comment: "Empty state hint in the starred pane")
+    static let removeStar = NSLocalizedString("Remove Star", comment: "Menu item removing a note's star")
+    static let clearStarred = NSLocalizedString("Remove All Stars", comment: "Menu item clearing every starred note")
+    static let missingNote = NSLocalizedString("Note not found", comment: "Warning beside a starred note whose file is gone")
+    static let copyWikiLink = NSLocalizedString("Copy Wiki Link", comment: "Note context menu action copying an [[wiki link]]")
+    static let moveToTrash = NSLocalizedString("Move to Trash", comment: "Note context menu action deleting the note from disk")
+    static let copyTag = NSLocalizedString("Copy Tag", comment: "Tag context menu action copying the tag to the pasteboard")
+    static let archiveNote = NSLocalizedString("Archive Note", comment: "Sidebar footer button moving the current note into the vault's .trash folder")
+    static let noSearchResultsHint = NSLocalizedString("Nothing in the vault matches the filter. Press ⌫ in the field to clear it.", comment: "Empty state hint when the sidebar filter hides every note")
+    static let noSiblings = NSLocalizedString("No other notes here", comment: "Empty state title in the same-folder pane")
+    static let siblingNotes = NSLocalizedString("SAME FOLDER", comment: "Sidebar section heading for notes in the same folder")
+    static let noFolderNotes = NSLocalizedString("Nothing in this folder", comment: "Empty state title when a folder has no notes")
+    static let openGraphWindow = NSLocalizedString("Open Graph Window", comment: "Sidebar button opening the standalone graph window")
+    static let graphWindowHelp = NSLocalizedString("Open Graph Window (⇧⌘G)", comment: "Help text for the graph window button")
+    static let graphDefaultScope = NSLocalizedString("Graph scope", comment: "Settings picker choosing the graph window's initial scope")
+    static let followCurrentNote = NSLocalizedString("Follow Current Note", comment: "Graph window option keeping the graph centred on the open note")
+    static let showLabels = NSLocalizedString("Show Labels", comment: "Graph window option showing note titles under nodes")
+    static let showTags = NSLocalizedString("Show Tags", comment: "Graph window option showing a note's tags in the inspector")
+    static let showOrphans = NSLocalizedString("Show Orphans", comment: "Graph window option including notes without links")
+    static let graphDepth = NSLocalizedString("Depth", comment: "Graph window control for how many links to walk")
+    static let graphNodeLimit = NSLocalizedString("Node Limit", comment: "Graph window control capping the number of notes")
+    static let graphReset = NSLocalizedString("Reset Layout", comment: "Graph window button restoring the automatic layout")
+    static let graphFit = NSLocalizedString("Fit to Window", comment: "Graph window button fitting the graph in view")
+    static let graphReheat = NSLocalizedString("Redraw", comment: "Graph window button re-running the layout")
+    static let graphOpenNote = NSLocalizedString("Open", comment: "Graph inspector button opening the selected note")
+    static let graphFilter = NSLocalizedString("Filter notes", comment: "Placeholder in the graph search field")
+    static let graphNoMatches = NSLocalizedString("No notes match the filter.", comment: "Graph empty state when a filter hides every note")
+    static let graphNoNotes = NSLocalizedString("No notes to graph yet", comment: "Graph empty state when the vault has no links")
+    static let graphNoNotesHint = NSLocalizedString("Link notes with [[wiki links]] to draw a graph.", comment: "Graph empty state hint")
+    static let selectGraphNode = NSLocalizedString("Select a note to see its links.", comment: "Graph inspector placeholder")
+    static let linkedNotesSection = NSLocalizedString("LINKS", comment: "Graph inspector section heading for outgoing links")
+    static let backlinksSection = NSLocalizedString("BACKLINKS", comment: "Graph inspector section heading for incoming links")
+    static let tagsSection = NSLocalizedString("TAGS", comment: "Graph inspector section heading for tags")
+    static let zoomInGraph = NSLocalizedString("Zoom In", comment: "Graph window zoom button")
+    static let zoomOutGraph = NSLocalizedString("Zoom Out", comment: "Graph window zoom button")
+    static let graphShowsCurrent = NSLocalizedString("Current note", comment: "Graph legend label for the highlighted note")
+
     // MARK: - Menu bar
 
     static let newTabMenu = NSLocalizedString("New Tab", comment: "Menu item to create a tab")
@@ -342,5 +399,40 @@ enum L10n {
 
     static func tabAccessibilityLabel(_ title: String) -> String {
         String(format: NSLocalizedString("%@ tab", comment: "Accessibility label for a tab with the document name"), title)
+    }
+
+    static func starredCount(_ count: Int) -> String {
+        count == 1
+            ? NSLocalizedString("1 starred", comment: "Starred pane count for one note")
+            : String(format: NSLocalizedString("%d starred", comment: "Starred pane count"), count)
+    }
+
+    static func searchResultCount(_ count: Int) -> String {
+        count == 1
+            ? NSLocalizedString("1 note", comment: "Sidebar search result count for one note")
+            : String(format: NSLocalizedString("%d notes", comment: "Sidebar search result count"), count)
+    }
+
+    static func openNotePath(_ path: String) -> String {
+        String(format: NSLocalizedString("Open %@", comment: "Accessibility label for a sidebar note row with its path"), path)
+    }
+
+    static func graphStats(nodes: Int, links: Int) -> String {
+        String(
+            format: NSLocalizedString("%d notes · %d links", comment: "Graph window footer statistics"),
+            nodes,
+            links
+        )
+    }
+
+    static let graphTitleMenu = NSLocalizedString("Graph", comment: "Menu title shown while the graph window is key")
+    static let toggleInspector = NSLocalizedString("Toggle Inspector", comment: "Graph window command showing or hiding the inspector")
+    static let clearFilters = NSLocalizedString("Clear Filters", comment: "Graph window action removing every active filter")
+    static let openInMainWindow = NSLocalizedString("Open in Main Window", comment: "Graph inspector action opening the note in the editor")
+    static let graphCurrentNote = NSLocalizedString("Current note", comment: "Graph legend label for the highlighted note")
+    static let graphNoFilteredLinks = NSLocalizedString("None in view", comment: "Graph inspector placeholder when links exist but are filtered out")
+
+    static func graphFiltered(hidden: Int) -> String {
+        String(format: NSLocalizedString("%d hidden by the filter", comment: "Graph window notice about filtered notes"), hidden)
     }
 }

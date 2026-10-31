@@ -3,8 +3,10 @@ import Foundation
 // MARK: - Panes
 
 /// Sections available in the vault sidebar.
+///
+/// Order matters: it is the order of the pane picker in the sidebar header.
 enum VaultPane: String, CaseIterable, Identifiable, Sendable {
-    case files, outline, tags, backlinks, graph
+    case files, outline, tags, backlinks, stars, graph
 
     var id: String { rawValue }
 
@@ -14,6 +16,7 @@ enum VaultPane: String, CaseIterable, Identifiable, Sendable {
         case .outline: "Outline"
         case .tags: "Tags"
         case .backlinks: "Backlinks"
+        case .stars: "Starred"
         case .graph: "Graph"
         }
     }
@@ -24,6 +27,7 @@ enum VaultPane: String, CaseIterable, Identifiable, Sendable {
         case .outline: "list.bullet.indent"
         case .tags: "number"
         case .backlinks: "link"
+        case .stars: "star"
         case .graph: "point.3.connected.trianglepath.dotted"
         }
     }
@@ -84,8 +88,13 @@ struct VaultSearchResult: Identifiable, Equatable, Sendable {
 struct VaultGraphNode: Identifiable, Equatable, Sendable {
     let id: String
     let title: String
+    /// Folder relative to the vault root (`""` for notes at the root).
+    let folder: String
     let isCurrent: Bool
+    /// Number of links touching this node inside the graph being displayed.
     let linkCount: Int
+    /// Tags the note declares, used to group and filter the graph.
+    let tags: [String]
 }
 
 struct VaultGraphEdge: Identifiable, Equatable, Sendable {
@@ -98,6 +107,28 @@ struct VaultGraphEdge: Identifiable, Equatable, Sendable {
 struct VaultGraph: Equatable, Sendable {
     let nodes: [VaultGraphNode]
     let edges: [VaultGraphEdge]
+
+    static let empty = VaultGraph(nodes: [], edges: [])
+
+    /// Distinct folders represented in the graph, sorted for pickers.
+    var folders: [String] {
+        Set(nodes.map(\.folder)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    var tags: [String] {
+        Set(nodes.flatMap(\.tags)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// Graph with some nodes and every edge they carried removed.
+    func removing(nodesIDs ids: Set<String>) -> VaultGraph {
+        guard !ids.isEmpty else { return self }
+        let kept = nodes.filter { !ids.contains($0.id) }
+        let keptIDs = Set(kept.map(\.id))
+        return VaultGraph(
+            nodes: kept,
+            edges: edges.filter { keptIDs.contains($0.source) && keptIDs.contains($0.target) }
+        )
+    }
 }
 
 // MARK: - Scanner
@@ -362,13 +393,20 @@ enum VaultScanner {
     }
 
     /// Nodes and edges for the current note plus its direct (or `depth`-step) neighbours.
+    ///
+    /// - Parameters:
+    ///   - depth: How many link hops to walk from the current note (clamped to 0…4).
+    ///   - limit: Upper bound on nodes in the result. The sidebar graph keeps the
+    ///     historical default of 60; the standalone graph window asks for more.
+    ///   - highlighting: Note rendered as "current" (defaults to `url`).
     static func graph(
         around url: URL?,
         in files: [VaultFile],
         depth: Int = 1,
+        limit: Int = 60,
         highlighting highlight: URL? = nil
     ) -> VaultGraph {
-        guard !files.isEmpty else { return VaultGraph(nodes: [], edges: []) }
+        guard !files.isEmpty, limit > 0 else { return .empty }
 
         let aliasMap = aliasMap(for: files)
         var filesByPath: [String: VaultFile] = [:]
@@ -377,6 +415,7 @@ enum VaultScanner {
         }
 
         var outgoing: [String: Set<String>] = [:]
+        var tagsByPath: [String: [String]] = [:]
         for file in files {
             guard let text = readText(file.url) else { continue }
             let source = file.url.standardizedFileURL.path
@@ -385,6 +424,7 @@ enum VaultScanner {
                     outgoing[source, default: []].insert(resolved.standardizedFileURL.path)
                 }
             }
+            tagsByPath[source] = tags(inText: text)
         }
 
         var neighbours: [String: Set<String>] = [:]
@@ -406,11 +446,11 @@ enum VaultScanner {
             includedSet.insert(start)
 
             var level = 0
-            while level < maxDepth, !frontier.isEmpty, included.count < 60 {
+            while level < maxDepth, !frontier.isEmpty, included.count < limit {
                 var next: [String] = []
                 for node in frontier {
                     for neighbour in (neighbours[node] ?? []).sorted() {
-                        guard included.count < 60 else { break }
+                        guard included.count < limit else { break }
                         if includedSet.insert(neighbour).inserted {
                             included.append(neighbour)
                             next.append(neighbour)
@@ -426,20 +466,23 @@ enum VaultScanner {
                 if order != .orderedSame { return order == .orderedAscending }
                 return lhs.url.path < rhs.url.path
             }
-            for file in sorted.prefix(60) {
+            for file in sorted.prefix(limit) {
                 let path = file.url.standardizedFileURL.path
                 guard includedSet.insert(path).inserted else { continue }
                 included.append(path)
             }
         }
 
-        if included.count > 60 {
-            included.removeLast(included.count - 60)
+        if included.count > limit {
+            included.removeLast(included.count - limit)
             includedSet = Set(included)
         }
 
+        // Node ids are the standardized file paths used everywhere else in the graph,
+        // so edges and the BFS frontier speak the same language. Normalizing here also
+        // keeps a note that links back to itself (via its own /private/var alias) out.
         func nodeID(for path: String) -> String {
-            filesByPath[path]?.url.path ?? path
+            filesByPath[path]?.url.standardizedFileURL.path ?? URL(fileURLWithPath: path).standardizedFileURL.path
         }
 
         var edges: [VaultGraphEdge] = []
@@ -447,7 +490,11 @@ enum VaultScanner {
         for (source, targets) in outgoing {
             guard includedSet.contains(source) else { continue }
             for target in targets where includedSet.contains(target) {
-                let edge = VaultGraphEdge(source: nodeID(for: source), target: nodeID(for: target))
+                let from = nodeID(for: source)
+                let to = nodeID(for: target)
+                // Links pointing back at their own note are dropped so degrees stay meaningful.
+                guard from != to else { continue }
+                let edge = VaultGraphEdge(source: from, target: to)
                 guard seenEdges.insert(edge.id).inserted else { continue }
                 edges.append(edge)
             }
@@ -470,15 +517,40 @@ enum VaultScanner {
             let title = file?.title
                 ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
             let id = nodeID(for: path)
+            let folder: String
+            if let file, let root = commonAncestor(of: files) {
+                folder = relativeDirectory(of: file.url, in: root)
+            } else {
+                folder = ""
+            }
             return VaultGraphNode(
                 id: id,
                 title: title,
+                folder: folder,
                 isCurrent: currentPath == path,
-                linkCount: degree[id] ?? 0
+                linkCount: degree[id] ?? 0,
+                tags: tagsByPath[path] ?? []
             )
         }
 
         return VaultGraph(nodes: nodes, edges: edges)
+    }
+
+    /// Deepest directory that contains every file in `files`.
+    private static func commonAncestor(of files: [VaultFile]) -> URL? {
+        guard let first = files.first else { return nil }
+        var ancestor = first.url.deletingLastPathComponent().standardizedFileURL
+        let components = ancestor.pathComponents
+        for file in files.dropFirst() {
+            let dir = file.url.deletingLastPathComponent().standardizedFileURL.pathComponents
+            var shared = 0
+            while shared < components.count, shared < dir.count, components[shared] == dir[shared] {
+                shared += 1
+            }
+            guard shared > 0 else { return nil }
+            ancestor = URL(fileURLWithPath: NSString.path(withComponents: Array(components.prefix(shared))))
+        }
+        return ancestor
     }
 
     /// Case-insensitive substring search, one result per matching line.
@@ -529,6 +601,135 @@ enum VaultScanner {
             if order != .orderedSame { return order == .orderedAscending }
             if lhs.line != rhs.line { return lhs.line < rhs.line }
             return lhs.url.path < rhs.url.path
+        }
+    }
+
+    /// Body text of a note, or `nil` when it is missing or too large to index.
+    static func bodyText(of url: URL) -> String? {
+        guard !isTooLarge(url), let text = readText(url) else { return nil }
+        return MarkdownFrontmatterParser.parse(text)?.body ?? text
+    }
+
+    /// One snippet per matching note (the first matching line), for the sidebar search.
+    ///
+    /// Unlike ``search(_:in:limit:)`` this collapses all hits in a note to a single row,
+    /// which is what a compact sidebar list needs. Results favour the current folder,
+    /// then titles that start with the query, then recency.
+    static func matchingNotes(
+        _ query: String,
+        in files: [VaultFile],
+        limit: Int = 40
+    ) -> [VaultSearchResult] {
+        let parsed = VaultQuery.parse(query)
+        guard !parsed.isEmpty, limit > 0 else { return [] }
+
+        let options: String.CompareOptions = parsed.matchCase ? [] : [.caseInsensitive]
+        let plain = parsed.text.trimmingCharacters(in: .whitespaces)
+
+        var scored: [(result: VaultSearchResult, score: Int)] = []
+        for file in files {
+            guard parsed.matchesFile(file) else { continue }
+            let titleHit = !plain.isEmpty && file.title.range(of: plain, options: options) != nil
+            // Title-only filters never read the body, keeping huge vaults responsive.
+            let needsText = !parsed.contentFragments.isEmpty
+                || !parsed.tags.isEmpty
+                || !parsed.excludedTags.isEmpty
+                || (!titleHit && !plain.isEmpty)
+            guard needsText else {
+                scored.append((VaultSearchResult(url: file.url, title: file.title, line: 1, excerpt: ""), 3))
+                continue
+            }
+            guard let text = bodyText(of: file.url),
+                  parsed.matchesMetadata(of: text) else { continue }
+
+            var lineNumber = 0
+            var excerpt = ""
+            if !plain.isEmpty, !titleHit {
+                let lines = normalizedLines(text)
+                guard let match = lines.firstIndex(where: {
+                    $0.range(of: plain, options: options) != nil
+                }) else { continue }
+                lineNumber = match + 1
+                excerpt = centeredExcerpt(lines[match], needle: plain, limit: 120)
+            }
+            var score = titleHit ? 4 : 0
+            if titleHit, file.title.lowercased().hasPrefix(plain.lowercased()) { score += 2 }
+            if plain.isEmpty { score += 1 }
+            scored.append((
+                VaultSearchResult(url: file.url, title: file.title, line: lineNumber, excerpt: excerpt),
+                score
+            ))
+        }
+
+        return scored
+            .sorted { lhs, rhs in
+                if lhs.score != rhs.score { return lhs.score > rhs.score }
+                return lhs.result.title.localizedStandardCompare(rhs.result.title) == .orderedAscending
+            }
+            .prefix(limit)
+            .map(\.result)
+    }
+
+    /// Notes modified inside the last `days` days, newest first.
+    static func recentNotes(in files: [VaultFile], days: Int = 30, limit: Int = 50) -> [VaultFile] {
+        guard limit > 0 else { return [] }
+        let cutoff = Date().addingTimeInterval(-Double(max(1, days)) * 86_400)
+        return files
+            .filter { $0.modified >= cutoff }
+            .sorted { $0.modified > $1.modified }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    /// Notes in the same folder as `url`, current note first.
+    static func siblings(of url: URL, in files: [VaultFile]) -> [VaultFile] {
+        let folder = url.deletingLastPathComponent().standardizedFileURL.path
+        let matches = files.filter {
+            $0.url.deletingLastPathComponent().standardizedFileURL.path == folder
+        }
+        let current = url.standardizedFileURL
+        return matches.sorted { lhs, rhs in
+            let lhsCurrent = lhs.url.standardizedFileURL == current
+            let rhsCurrent = rhs.url.standardizedFileURL == current
+            if lhsCurrent != rhsCurrent { return lhsCurrent }
+            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+        }
+    }
+
+    /// Sorts a flat slice of notes for the files pane's "All Notes" listing.
+    static func sorted(_ files: [VaultFile], by sort: VaultFileSort, ascending: Bool) -> [VaultFile] {
+        func compare(_ lhs: VaultFile, _ rhs: VaultFile) -> Bool {
+            let nameOrder = lhs.title.localizedStandardCompare(rhs.title)
+            switch sort {
+            case .name:
+                if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+                return lhs.relativePath < rhs.relativePath
+            case .modified, .created, .size:
+                let lhsValue = sortValue(lhs, sort: sort)
+                let rhsValue = sortValue(rhs, sort: sort)
+                if lhsValue != rhsValue { return lhsValue > rhsValue }
+                return nameOrder == .orderedAscending
+            }
+        }
+        let ordered = files.sorted(by: compare)
+        return ascending ? ordered.reversed() : ordered
+    }
+
+    private static func sortValue(_ file: VaultFile, sort: VaultFileSort) -> Date {
+        guard let values = try? file.url.resourceValues(forKeys: [
+            .contentModificationDateKey,
+            .creationDateKey,
+            .fileSizeKey
+        ]) else {
+            return file.modified
+        }
+        switch sort {
+        case .name, .modified:
+            return values.contentModificationDate ?? file.modified
+        case .created:
+            return values.creationDate ?? file.modified
+        case .size:
+            return Date(timeIntervalSince1970: TimeInterval(values.fileSize ?? 0))
         }
     }
 
@@ -676,13 +877,32 @@ enum VaultScanner {
         return path
     }
 
-    private static func relativePath(of url: URL, in root: URL) -> String {
+    static func relativePath(of url: URL, in root: URL) -> String {
         let rootComponents = root.standardizedFileURL.pathComponents
         let fileComponents = url.standardizedFileURL.pathComponents
         guard fileComponents.count > rootComponents.count else {
             return url.lastPathComponent
         }
         return fileComponents.dropFirst(rootComponents.count).joined(separator: "/")
+    }
+
+    /// Number of notes whose relative path contains `fragment`, for folder hints.
+    static func count(in files: [VaultFile], matching fragment: String) -> Int {
+        guard !fragment.isEmpty else { return files.count }
+        return files.reduce(0) { $0 + ($1.relativePath.contains(fragment) ? 1 : 0) }
+    }
+
+    /// Directory of `url` relative to `root` (`""` when the file sits at the root).
+    static func relativeDirectory(of url: URL, in root: URL) -> String {
+        let rootComponents = root.standardizedFileURL.pathComponents
+        let fileComponents = url.standardizedFileURL.pathComponents
+        guard fileComponents.count > rootComponents.count else {
+            return ""
+        }
+        return fileComponents
+            .dropFirst(rootComponents.count)
+            .dropLast()
+            .joined(separator: "/")
     }
 
     // MARK: - Text helpers
@@ -846,7 +1066,8 @@ private enum Patterns {
 /// A parsed vault search query with Obsidian-style operators.
 ///
 /// Supported: `tag:name` (any depth, `tag:#a/b` and `-tag:` work), `path:fragment`,
-/// `file:fragment`, `match-case:` / `ignore-case:`, and quoted values (`tag:"needs review"`).
+/// `file:fragment`, `content:needle` (body text only), `title:needle` (titles only),
+/// `match-case:` / `ignore-case:`, and quoted values (`tag:"needs review"`).
 /// Everything else is the free-text needle, which is matched case-insensitively by default.
 struct VaultQuery: Equatable {
     var text: String = ""
@@ -856,12 +1077,19 @@ struct VaultQuery: Equatable {
     var excludedPathFragments: [String] = []
     var nameFragments: [String] = []
     var excludedNameFragments: [String] = []
+    /// Body-only needles: match the note if the text appears anywhere in its contents.
+    var contentFragments: [String] = []
     var matchCase: Bool = false
+
+    /// Every free-text needle, including `content:` terms.
+    var needles: [String] {
+        ([text].filter { !$0.isEmpty } + contentFragments)
+    }
 
     var isEmpty: Bool {
         text.isEmpty && tags.isEmpty && excludedTags.isEmpty && pathFragments.isEmpty
             && excludedPathFragments.isEmpty && nameFragments.isEmpty
-            && excludedNameFragments.isEmpty
+            && excludedNameFragments.isEmpty && contentFragments.isEmpty
     }
 
     static func parse(_ raw: String) -> VaultQuery {
@@ -894,6 +1122,14 @@ struct VaultQuery: Equatable {
                 if isNegated { query.excludedPathFragments.append(value.lowercased()) }
                 else { query.pathFragments.append(value.lowercased()) }
             case "file", "filename":
+                guard !value.isEmpty else { break }
+                if isNegated { query.excludedNameFragments.append(value.lowercased()) }
+                else { query.nameFragments.append(value.lowercased()) }
+            case "content":
+                guard !value.isEmpty else { break }
+                // A negated content filter has no meaning for line search; ignore it.
+                if !isNegated { query.contentFragments.append(value) }
+            case "title", "name":
                 guard !value.isEmpty else { break }
                 if isNegated { query.excludedNameFragments.append(value.lowercased()) }
                 else { query.nameFragments.append(value.lowercased()) }
@@ -947,8 +1183,13 @@ struct VaultQuery: Equatable {
         return true
     }
 
-    /// Tag filters need the file's text, so they run after it has been read.
+    /// Tag and content filters need the file's text, so they run after it has been read.
     func matchesMetadata(of text: String) -> Bool {
+        guard !tags.isEmpty || !excludedTags.isEmpty || !contentFragments.isEmpty else { return true }
+        for fragment in contentFragments {
+            let options: String.CompareOptions = matchCase ? [] : [.caseInsensitive]
+            guard text.range(of: fragment, options: options) != nil else { return false }
+        }
         guard !tags.isEmpty || !excludedTags.isEmpty else { return true }
         let present = Set(VaultScanner.tags(inText: text).map { $0.lowercased() })
         for tag in tags where !present.contains(where: { $0 == tag || $0.hasPrefix(tag + "/") }) {

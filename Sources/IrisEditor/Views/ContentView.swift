@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.openWindow) private var openWindow
 
     /// 3×3 GFM pipe table inserted at the cursor.
     static let tableTemplate = """
@@ -133,6 +134,15 @@ struct ContentView: View {
                 .help(L10n.searchAllNotesHelp)
                 .accessibilityLabel(L10n.searchAllNotes)
                 .accessibilityIdentifier("Toolbar.SearchVault")
+
+                Button {
+                    openWindow(id: AppWindows.graph)
+                } label: {
+                    Label(L10n.openGraphWindow, systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                .help(L10n.graphWindowHelp)
+                .accessibilityLabel(L10n.openGraphWindow)
+                .accessibilityIdentifier("Toolbar.GraphWindow")
 
                 Button {
                     appState.toggleZenMode()

@@ -6,6 +6,8 @@ struct IrisEditorApp: App {
     @StateObject private var appState = AppState.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    @Environment(\.openWindow) private var openWindow
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -331,6 +333,24 @@ struct IrisEditorApp: App {
 
                 Divider()
 
+                Button(appState.isCurrentNoteStarred ? L10n.unstarNote : L10n.starNote) {
+                    appState.toggleStarForCurrentNote()
+                }
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .toggleStar))
+
+                Button(L10n.openGraphWindow) {
+                    openWindow(id: AppWindows.graph)
+                }
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .openGraphWindow))
+
+                Button(L10n.searchNotes) {
+                    appState.setSidebarPane(.files)
+                    appState.sidebarSearchQuery = ""
+                    NotificationCenter.default.post(name: .focusSidebarSearch, object: nil)
+                }
+
+                Divider()
+
                 Menu(L10n.sidebarMenu) {
                     ForEach(VaultPane.allCases) { pane in
                         Button(pane.title) {
@@ -368,6 +388,16 @@ struct IrisEditorApp: App {
                 .disabled(appState.secondDocument != nil)
             }
         }
+
+        // Standalone graph explorer (⇧⌘G): a separate, resizable window so the
+        // vault graph can be studied without squeezing it into the sidebar.
+        Window(L10n.vaultGraph + " Graph", id: AppWindows.graph) {
+            GraphWindowView()
+                .environmentObject(appState)
+        }
+        .defaultSize(width: 980, height: 680)
+        .windowToolbarStyle(.unified)
+        .windowResizability(.contentMinSize)
 
         Settings {
             SettingsView()
