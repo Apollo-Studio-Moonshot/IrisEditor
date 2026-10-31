@@ -67,6 +67,25 @@ public struct GraphLayout {
     }
 }
 
+// MARK: - Forces
+
+/// User-tunable physics for the graph, mirroring Obsidian's Display sliders.
+///
+/// Every value is a multiplier over the engine's tuned defaults, so `GraphForces()`
+/// reproduces the classic layout exactly.
+public struct GraphForces: Equatable, Sendable {
+    /// Pull toward the canvas centre (`1` keeps isolated notes from drifting away).
+    public var centerForce: CGFloat = 1
+    /// Preferred edge length (`1` is the automatic spacing for the canvas size).
+    public var linkDistance: CGFloat = 1
+    /// How strongly linked notes are pulled together.
+    public var linkForce: CGFloat = 1
+    /// Scales every node's radius.
+    public var nodeScale: CGFloat = 1
+
+    public init() {}
+}
+
 // MARK: - Layout engine
 
 /// Deterministic force-directed layout (Fruchterman–Reingold style pressure with a
@@ -76,7 +95,8 @@ public enum GraphLayoutEngine {
     static func layout(
         _ graph: VaultGraph,
         in size: CGSize,
-        iterations: Int = 220
+        iterations: Int = 220,
+        forces: GraphForces = GraphForces()
     ) -> GraphLayout {
         guard !graph.nodes.isEmpty, size.width > 1, size.height > 1 else {
             return GraphLayout()
@@ -86,7 +106,7 @@ public enum GraphLayoutEngine {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         let usable = CGSize(width: size.width - 44, height: size.height - 44)
         let areas = max(1, Double(usable.width * usable.height))
-        let ideal = sqrt(areas / Double(count))
+        let ideal = sqrt(areas / Double(count)) * max(0.25, Double(forces.linkDistance))
         let maxRadius = Double(min(usable.width, usable.height)) / 2
         var positions = initialPositions(
             graph: graph,
