@@ -7,7 +7,12 @@ struct SidebarView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.openWindow) private var openWindow
 
+    /// Editor content width. Zero until the first layout pass; resizing is capped at
+    /// half of it so the editor always keeps usable room, even in a narrow window.
+    var viewportWidth: CGFloat = 0
+
     @FocusState private var isSearchFocused: Bool
+    @FocusState private var isResizeHandleFocused: Bool
     @Namespace private var panePill
     @State private var dragStartWidth: CGFloat?
     @State private var isResizeHandleHovered = false
@@ -15,6 +20,23 @@ struct SidebarView: View {
     @State private var isNewNoteHovered = false
 
     private let cornerRadius: CGFloat = 18
+    private let resizeStep: CGFloat = 16
+
+    private var minimumWidth: CGFloat {
+        CGFloat(EditorSettings.sidebarWidthRange.lowerBound)
+    }
+
+    /// The widest the sidebar may get: never more than half the content area.
+    private var maximumWidth: CGFloat {
+        let range = EditorSettings.sidebarWidthRange
+        guard viewportWidth > 0 else { return CGFloat(range.upperBound) }
+        return CGFloat(min(range.upperBound, max(range.lowerBound, viewportWidth * 0.5)))
+    }
+
+    /// What is actually drawn, clamped to the current viewport.
+    private var effectiveWidth: CGFloat {
+        min(appState.sidebarWidth, maximumWidth)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,7 +64,7 @@ struct SidebarView: View {
 
             footer
         }
-        .frame(width: appState.sidebarWidth)
+        .frame(width: effectiveWidth)
         .background { SidebarGlassSurface(cornerRadius: cornerRadius) }
         .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
         .overlay {
@@ -337,9 +359,18 @@ struct SidebarView: View {
     /// floating readout shows the live width, and a double-click restores the default.
     private var resizeHandle: some View {
         ZStack {
+            // Always faintly visible so the grab area is discoverable, stronger while
+            // hovered, focused or dragged.
             Capsule(style: .continuous)
-                .fill(Color.primary.opacity(isResizeHandleHovered || dragStartWidth != nil ? 0.28 : 0.001))
+                .fill(Color.primary.opacity(
+                    dragStartWidth != nil || isResizeHandleHovered || isResizeHandleFocused ? 0.3 : 0.12
+                ))
                 .frame(width: 3, height: 36)
+
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.8), lineWidth: 1)
+                .frame(width: 9, height: 44)
+                .opacity(isResizeHandleFocused ? 1 : 0)
 
             if dragStartWidth != nil {
                 Text("\(Int(appState.sidebarWidth))")
@@ -363,6 +394,21 @@ struct SidebarView: View {
         }
         .frame(width: 9, height: 88)
         .contentShape(.rect)
+        .focusable()
+        .focused($isResizeHandleFocused)
+        .focusEffectDisabled()
+        .onKeyPress(.leftArrow) {
+            withAnimation(.snappy(duration: 0.18)) {
+                appState.sidebarWidth = max(minimumWidth, effectiveWidth - resizeStep)
+            }
+            return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            withAnimation(.snappy(duration: 0.18)) {
+                appState.sidebarWidth = min(maximumWidth, effectiveWidth + resizeStep)
+            }
+            return .handled
+        }
         .onHover { hovering in
             isResizeHandleHovered = hovering
             if hovering {
@@ -373,14 +419,15 @@ struct SidebarView: View {
         }
         .animation(.easeOut(duration: 0.12), value: isResizeHandleHovered)
         .animation(.snappy(duration: 0.18), value: dragStartWidth == nil)
+        .animation(.easeOut(duration: 0.12), value: isResizeHandleFocused)
         .gesture(
             DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .onChanged { value in
                     if dragStartWidth == nil {
-                        dragStartWidth = appState.sidebarWidth
+                        dragStartWidth = effectiveWidth
                     }
-                    let start = dragStartWidth ?? appState.sidebarWidth
-                    appState.sidebarWidth = start + value.translation.width
+                    let start = dragStartWidth ?? effectiveWidth
+                    appState.sidebarWidth = min(maximumWidth, start + value.translation.width)
                 }
                 .onEnded { _ in
                     dragStartWidth = nil
@@ -394,10 +441,11 @@ struct SidebarView: View {
         .help(L10n.resizeSidebar)
         .accessibilityLabel(L10n.resizeSidebar)
         .accessibilityIdentifier("Sidebar.ResizeHandle")
+        .accessibilityValue("\(Int(effectiveWidth))")
         .accessibilityAdjustableAction { direction in
             switch direction {
-            case .increment: appState.sidebarWidth += 16
-            case .decrement: appState.sidebarWidth -= 16
+            case .increment: appState.sidebarWidth = min(maximumWidth, effectiveWidth + resizeStep)
+            case .decrement: appState.sidebarWidth = max(minimumWidth, effectiveWidth - resizeStep)
             @unknown default: break
             }
         }
@@ -1322,7 +1370,11 @@ private struct VaultGraphPane: View {
                     graph: appState.vaultGraph,
                     showsLabels: appState.vaultGraph.nodes.count <= 22,
                     interactive: true,
-                    selectedNodeID: $selectedNodeID
+                    selectedNodeID: $selectedNodeID,
+                    onOpenNode: { nodeID in
+                        appState.open(url: URL(fileURLWithPath: nodeID))
+                        selectedNodeID = nil
+                    }
                 )
                 .padding(.horizontal, 6)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -256,7 +256,13 @@ struct GraphWindowView: View {
                     selectedNodeID: Binding(
                         get: { model.selectedNodeID },
                         set: { model.selectedNodeID = $0 }
-                    )
+                    ),
+                    onOpenNode: { nodeID in
+                        appState.openFromGraph(url: URL(fileURLWithPath: nodeID))
+                        if !NSEvent.modifierFlags.contains(.option) {
+                            dismissGraphWindow()
+                        }
+                    }
                 )
                 statusBar
             }

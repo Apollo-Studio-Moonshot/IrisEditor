@@ -1,3 +1,5 @@
+import AppKit
+import Foundation
 import SwiftUI
 
 // MARK: - Canvas
@@ -10,7 +12,8 @@ import SwiftUI
 ///
 /// Coordinates: node positions from ``GraphLayout`` are in *unzoomed* canvas space.
 /// Panning and zooming are applied as a single ``CGAffineTransform`` around the canvas
-/// centre, which keeps hit testing and drawing in sync.
+/// centre, which keeps hit testing and drawing in sync. Node drags are stored as
+/// screen-space offsets so a node follows the pointer at any zoom level.
 ///
 /// State lives in ``GraphCanvasStore`` (a reference type held by `@StateObject`) so that
 /// every gesture and button action mutates through a class reference. Writing
@@ -22,7 +25,13 @@ struct GraphCanvasView: View {
     var interactive: Bool = true
     @Binding var selectedNodeID: String?
 
+    /// Called when a node is double-clicked, with the node id (a note path).
+    var onOpenNode: ((String) -> Void)?
+
     @StateObject private var store = GraphCanvasStore()
+    @State private var hoveredNodeID: String?
+    @State private var draggingNodeID: String?
+    @State private var nodeDragTranslation: CGSize = .zero
 
     var body: some View {
         GeometryReader { proxy in
@@ -45,6 +54,15 @@ struct GraphCanvasView: View {
         }
         .frame(width: size.width, height: size.height)
         .contentShape(Rectangle())
+        .background {
+            if interactive {
+                // AppKit receives scroll-wheel events before SwiftUI, so a tiny
+                // monitor view gives us cursor-anchored scroll-to-zoom.
+                GraphScrollWheelMonitor { delta in
+                    store.zoomByWheel(delta)
+                }
+            }
+        }
         .gesture(interactive ? panGesture(in: size) : nil)
         .simultaneousGesture(interactive ? magnifyGesture : nil)
         .onTapGesture(coordinateSpace: .local) { location in
@@ -99,6 +117,7 @@ struct GraphCanvasView: View {
         xform: CGAffineTransform
     ) -> some View {
         let selected = selectedNodeID == node.id
+        let hovered = hoveredNodeID == node.id
         let neighbours = selectedNodeID.map { layout.neighbours(of: $0, in: graph) } ?? []
         let isNeighbour = neighbours.contains(node.id)
         let faded = selectedNodeID != nil && !selected && !isNeighbour && !node.isCurrent
@@ -106,30 +125,55 @@ struct GraphCanvasView: View {
         let radius = node.radius * xform.a
         let dragged = store.viewport.offset(for: node.id)
         let fontSize = Swift.min(11.5, Swift.max(7, 9.5 * xform.a))
+        // Labels are always shown when requested, and otherwise fade in on hover or
+        // once the user has zoomed in far enough to read them.
+        let showLabel = showsLabels || selected || hovered || xform.a >= 1.25
 
-        return nodeShape(node, selected: selected, radius: radius, fontSize: fontSize)
-            .opacity(faded ? 0.25 : 1)
-            .position(x: center.x + dragged.width, y: center.y + dragged.height)
-            .animation(.snappy(duration: 0.3), value: center)
-            .animation(.easeOut(duration: 0.16), value: radius)
-            .allowsHitTesting(false)
-            .help(node.title)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(node.title)
-            .accessibilityValue(L10n.linkedNotes(node.linkCount))
-            .accessibilityAddTraits(selected ? [.isSelected] : [])
-            .accessibilityIdentifier("Graph.Node.\(node.id)")
+        return nodeShape(
+            node,
+            selected: selected,
+            hovered: hovered,
+            radius: radius,
+            fontSize: fontSize,
+            showLabel: showLabel
+        )
+        .opacity(faded ? 0.25 : 1)
+        .position(x: center.x + dragged.width, y: center.y + dragged.height)
+        .animation(.snappy(duration: 0.3), value: center)
+        .animation(.easeOut(duration: 0.16), value: radius)
+        .allowsHitTesting(interactive)
+        .onHover { hovering in
+            if hovering {
+                hoveredNodeID = node.id
+            } else if hoveredNodeID == node.id {
+                hoveredNodeID = nil
+            }
+        }
+        // Single-click selection stays on the canvas so background clicks can clear it;
+        // only the double-click is handled by the node itself.
+        .onTapGesture(count: 2) {
+            onOpenNode?(node.id)
+        }
+        .highPriorityGesture(nodeDragGesture(for: node.id))
+        .help(node.title)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(node.title)
+        .accessibilityValue(L10n.linkedNotes(node.linkCount))
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .accessibilityIdentifier("Graph.Node.\(node.id)")
     }
 
     private func nodeShape(
         _ node: GraphLayout.Node,
         selected: Bool,
+        hovered: Bool,
         radius: CGFloat,
-        fontSize: CGFloat
+        fontSize: CGFloat,
+        showLabel: Bool
     ) -> some View {
         VStack(spacing: 2) {
             Circle()
-                .fill(fillColor(for: node, selected: selected))
+                .fill(fillColor(for: node, selected: selected, hovered: hovered))
                 .frame(width: radius * 2, height: radius * 2)
                 .overlay {
                     Circle()
@@ -139,9 +183,13 @@ struct GraphCanvasView: View {
                             lineWidth: selected ? 1.6 : 0.8
                         )
                 }
-                .shadow(color: .black.opacity(selected ? 0.25 : 0), radius: selected ? 5 : 0)
+                // A soft accent halo on hover and a tighter shadow while selected.
+                .shadow(
+                    color: hovered ? Color.accentColor.opacity(0.45) : .black.opacity(selected ? 0.25 : 0),
+                    radius: hovered ? 7 : (selected ? 5 : 0)
+                )
 
-            if showsLabels || selected {
+            if showLabel {
                 Text(node.title)
                     .font(.system(size: fontSize, weight: selected ? .semibold : .regular))
                     .foregroundStyle(selected ? Color.primary : Color.secondary)
@@ -151,11 +199,13 @@ struct GraphCanvasView: View {
             }
         }
         .frame(width: max(radius * 2, 12))
+        .contentShape(.rect)
     }
 
-    private func fillColor(for node: GraphLayout.Node, selected: Bool) -> Color {
+    private func fillColor(for node: GraphLayout.Node, selected: Bool, hovered: Bool) -> Color {
         if node.isCurrent { return Color.accentColor.opacity(selected ? 0.95 : 0.8) }
         if selected { return Color.accentColor.opacity(0.85) }
+        if hovered { return Color.accentColor.opacity(0.7) }
         if node.linkCount == 0 { return Color(nsColor: .tertiaryLabelColor).opacity(0.55) }
         return Color(nsColor: .secondaryLabelColor).opacity(0.85)
     }
@@ -186,6 +236,28 @@ struct GraphCanvasView: View {
             }
     }
 
+    /// Moves a node by the incremental part of a global-space drag. Working in global
+    /// coordinates keeps the translation stable even though the node itself moves.
+    private func nodeDragGesture(for id: String) -> some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
+            .onChanged { value in
+                if draggingNodeID != id {
+                    draggingNodeID = id
+                    nodeDragTranslation = .zero
+                }
+                let delta = CGSize(
+                    width: value.translation.width - nodeDragTranslation.width,
+                    height: value.translation.height - nodeDragTranslation.height
+                )
+                store.viewport.moveNode(id, by: delta)
+                nodeDragTranslation = value.translation
+            }
+            .onEnded { _ in
+                draggingNodeID = nil
+                nodeDragTranslation = .zero
+            }
+    }
+
     private var magnifyGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
@@ -197,16 +269,86 @@ struct GraphCanvasView: View {
     }
 
     private func select(at location: CGPoint, in size: CGSize) {
-        // Hit test in layout space: invert the view transform so clicks map back onto
-        // the unzoomed node positions.
-        let transform = store.transform(in: size)
-        let local = location.applying(transform.inverted())
-        let tolerance = 8 / max(transform.a, 0.4)
-        guard let hit = store.layout.node(at: local, tolerance: tolerance) else {
+        guard let hit = node(at: location, in: size) else {
             selectedNodeID = nil
             return
         }
         selectedNodeID = selectedNodeID == hit.id ? nil : hit.id
+    }
+
+    /// Hit test in layout space: invert the view transform so clicks map back onto
+    /// the unzoomed node positions.
+    private func node(at location: CGPoint, in size: CGSize) -> GraphLayout.Node? {
+        let transform = store.transform(in: size)
+        let local = location.applying(transform.inverted())
+        let tolerance = 8 / max(transform.a, 0.4)
+        return store.layout.node(at: local, tolerance: tolerance)
+    }
+}
+
+// MARK: - Scroll wheel
+
+/// Installs a local scroll-wheel monitor while the graph is on screen and forwards
+/// vertical deltas to the viewport when the pointer is inside this graph.
+///
+/// A monitor is used because AppKit delivers scroll events to the first responder
+/// before SwiftUI gestures, and a transparent overlay view would otherwise swallow
+/// clicks and drags meant for the nodes.
+private struct GraphScrollWheelMonitor: NSViewRepresentable {
+    let onScroll: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> GraphScrollWheelView {
+        let view = GraphScrollWheelView()
+        view.onScroll = onScroll
+        return view
+    }
+
+    func updateNSView(_ nsView: GraphScrollWheelView, context: Context) {
+        nsView.onScroll = onScroll
+    }
+
+    static func dismantleNSView(_ nsView: GraphScrollWheelView, coordinator: ()) {
+        nsView.stop()
+    }
+}
+
+/// NSEvent is explicitly non-Sendable; the monitor runs on the main thread, so it is
+/// safe to carry the event into `MainActor.assumeIsolated` in this small box.
+private struct UncheckedEvent: @unchecked Sendable {
+    let event: NSEvent
+}
+
+private final class GraphScrollWheelView: NSView {
+    var onScroll: ((CGFloat) -> Void)?
+    private var monitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        stop()
+        guard window != nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self else { return event }
+            let box = UncheckedEvent(event: event)
+            let consumed = MainActor.assumeIsolated { self.handle(box.event) }
+            return consumed ? nil : event
+        }
+    }
+
+    /// Returns `true` when the event was over this graph and should not propagate.
+    private func handle(_ event: NSEvent) -> Bool {
+        guard let window, event.window === window else { return false }
+        let point = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(point), let onScroll else { return false }
+        let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.deltaY
+        guard delta != 0 else { return false }
+        onScroll(delta)
+        return true
+    }
+
+    func stop() {
+        guard let monitor else { return }
+        NSEvent.removeMonitor(monitor)
+        self.monitor = nil
     }
 }
 
@@ -250,6 +392,18 @@ final class GraphCanvasStore: ObservableObject {
         viewport.zoom(by: -0.2)
     }
 
+    func zoomByWheel(_ delta: CGFloat) {
+        viewport.zoom(byWheelDelta: delta)
+    }
+
+    /// Fits the automatic layout back into view without discarding manual node drags.
+    func fitToView() {
+        withAnimation(.snappy(duration: 0.24)) {
+            viewport.fit()
+        }
+    }
+
+    /// Restores the viewport and every dragged node to their automatic positions.
     func resetViewport() {
         withAnimation(.snappy(duration: 0.24)) {
             viewport.reset()
@@ -259,8 +413,8 @@ final class GraphCanvasStore: ObservableObject {
 
 // MARK: - Zoom controls
 
-/// Zoom in / out / fit buttons. Actions go through ``GraphCanvasStore`` so the button
-/// closures never touch `@State` directly.
+/// Zoom in / out / fit / reset buttons. Actions go through ``GraphCanvasStore`` so the
+/// button closures never touch `@State` directly.
 private struct GraphZoomButtons: View {
     @ObservedObject var store: GraphCanvasStore
 
@@ -284,7 +438,7 @@ private struct GraphZoomButtons: View {
             .accessibilityLabel(L10n.zoomInGraph)
             .accessibilityIdentifier("Graph.ZoomIn")
 
-            Button(action: store.resetViewport) {
+            Button(action: store.fitToView) {
                 icon("arrow.up.left.and.arrow.down.right")
             }
             .buttonStyle(.plain)
@@ -292,6 +446,15 @@ private struct GraphZoomButtons: View {
             .help(L10n.graphFit)
             .accessibilityLabel(L10n.graphFit)
             .accessibilityIdentifier("Graph.ZoomFit")
+
+            Button(action: store.resetViewport) {
+                icon("arrow.counterclockwise")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help(L10n.graphReset)
+            .accessibilityLabel(L10n.graphReset)
+            .accessibilityIdentifier("Graph.ZoomReset")
         }
     }
 
@@ -365,11 +528,25 @@ struct GraphViewport: Equatable {
         zoom = Self.clamped(zoom + delta)
     }
 
+    /// Exponential scroll-wheel zoom. Positive deltas (scroll up) zoom in.
+    mutating func zoom(byWheelDelta delta: CGFloat) {
+        let factor = exp(delta * 0.01)
+        zoom = Self.clamped(zoom * factor)
+    }
+
     mutating func moveNode(_ id: String, by delta: CGSize) {
         var current = nodeOffsets[id] ?? .zero
         current.width += delta.width
         current.height += delta.height
         nodeOffsets[id] = current
+    }
+
+    /// Puts the viewport back to 100% with no pan, keeping manual node positions.
+    mutating func fit() {
+        zoom = 1
+        committedPan = .zero
+        livePan = .zero
+        magnifyBase = nil
     }
 
     mutating func reset() {

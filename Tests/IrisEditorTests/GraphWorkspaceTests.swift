@@ -310,6 +310,47 @@ struct GraphWorkspaceTests {
         #expect(viewport.offset(for: "b") == .zero)
     }
 
+    @Test func wheelZoomIsExponentialAndClamped() {
+        var viewport = GraphViewport()
+        viewport.zoom(byWheelDelta: 10)
+        #expect(viewport.zoom > 1)
+
+        viewport.zoom(byWheelDelta: 1_000)
+        #expect(viewport.zoom == GraphViewport.maximumZoom)
+
+        viewport.zoom(byWheelDelta: -1_000)
+        #expect(viewport.zoom == GraphViewport.minimumZoom)
+    }
+
+    @Test func fitResetsPanButKeepsDraggedNodes() {
+        var viewport = GraphViewport()
+        viewport.zoom(by: 1)
+        viewport.applyPan(CGSize(width: 40, height: 40), ended: true)
+        viewport.moveNode("a", by: CGSize(width: 5, height: 5))
+
+        viewport.fit()
+
+        #expect(viewport.zoom == 1)
+        #expect(viewport.committedPan == .zero)
+        #expect(viewport.offset(for: "a") == CGSize(width: 5, height: 5))
+    }
+
+    @Test func layoutStaysUsableFor250Nodes() {
+        let nodes = (0..<250).map { node("N\($0)", linkCount: $0 % 5) }
+        let edges = (0..<249).map { ("N\($0)", "N\($0 + 1)") }
+        let value = graph(nodes, edges)
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        let layout = GraphLayoutEngine.layout(value, in: CGSize(width: 1200, height: 800))
+        let elapsed = start.duration(to: clock.now)
+
+        #expect(layout.nodes.count == 250)
+        #expect(layout.edges.count == 249)
+        #expect(layout.nodes.allSatisfy { $0.position.x.isFinite && $0.position.y.isFinite })
+        #expect(elapsed < Duration.seconds(10))
+    }
+
     // MARK: Bookmarks
 
     @Test func bookmarkStoreAddsRemovesAndDeduplicates() {

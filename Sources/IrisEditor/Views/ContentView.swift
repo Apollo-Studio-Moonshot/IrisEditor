@@ -5,6 +5,9 @@ struct ContentView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.openWindow) private var openWindow
 
+    /// Width of the content area, used to cap the sidebar at half the viewport.
+    @State private var viewportWidth: CGFloat = 0
+
     /// 3×3 GFM pipe table inserted at the cursor.
     static let tableTemplate = """
     | Column 1 | Column 2 | Column 3 |
@@ -26,7 +29,7 @@ struct ContentView: View {
 
                 HStack(spacing: 0) {
                     if appState.showOutline && !appState.isZenMode {
-                        SidebarView()
+                        SidebarView(viewportWidth: viewportWidth)
                             .padding(.leading, 12)
                             .padding(.top, 10)
                             .padding(.bottom, 8)
@@ -68,6 +71,17 @@ struct ContentView: View {
         }
         .tint(appState.settings.accentColor)
         .preferredColorScheme(appState.settings.appearance.colorScheme)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: ViewportWidthPreferenceKey.self,
+                    value: proxy.size.width
+                )
+            }
+        }
+        .onPreferenceChange(ViewportWidthPreferenceKey.self) { width in
+            viewportWidth = width
+        }
         .background(
             WindowConfigurator(
                 displayName: appState.document.displayName,
@@ -511,5 +525,14 @@ struct ContentView: View {
         .help(help)
         .accessibilityLabel(help)
         .accessibilityIdentifier("Toolbar.\(prefix)")
+    }
+}
+
+/// Reports the editor content width so the sidebar can cap itself at half the viewport.
+private struct ViewportWidthPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
