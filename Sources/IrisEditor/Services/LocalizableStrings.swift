@@ -33,8 +33,7 @@ enum L10n {
     static let saveToSeeBacklinks = NSLocalizedString("Save to see backlinks", comment: "Empty state title when the document is unsaved")
     static let saveToSeeBacklinksHint = NSLocalizedString("Backlinks are indexed by note name.", comment: "Empty state hint explaining backlink indexing")
     static let noBacklinks = NSLocalizedString("No backlinks", comment: "Empty state title in the backlinks pane")
-    static let noLocalGraph = NSLocalizedString("No local graph", comment: "Empty state title in the graph pane")
-    static let noLocalGraphHint = NSLocalizedString("Link notes with [[wiki links]] to build a graph.", comment: "Empty state hint in the graph pane")
+    static let backlinksSection = NSLocalizedString("BACKLINKS", comment: "Backlinks pane section heading for incoming links")
     static let unsavedChanges = NSLocalizedString("Unsaved changes", comment: "Help text for the dirty tab indicator")
     static let edited = NSLocalizedString("Edited", comment: "Status bar label for unsaved changes")
     static let utf8 = NSLocalizedString("UTF-8", comment: "Status bar encoding label")
@@ -71,44 +70,6 @@ enum L10n {
     static let noSiblings = NSLocalizedString("No other notes here", comment: "Empty state title in the same-folder pane")
     static let siblingNotes = NSLocalizedString("SAME FOLDER", comment: "Sidebar section heading for notes in the same folder")
     static let noFolderNotes = NSLocalizedString("Nothing in this folder", comment: "Empty state title when a folder has no notes")
-    static let openGraphWindow = NSLocalizedString("Open Graph View", comment: "Sidebar button opening the graph view tab")
-    static let graphWindowHelp = NSLocalizedString("Open Graph View (⇧⌘G)", comment: "Help text for the graph view button")
-    static let graphDefaultScope = NSLocalizedString("Graph scope", comment: "Settings picker choosing the graph window's initial scope")
-    static let followCurrentNote = NSLocalizedString("Follow Current Note", comment: "Graph window option keeping the graph centred on the open note")
-    static let showLabels = NSLocalizedString("Show Labels", comment: "Graph window option showing note titles under nodes")
-    static let showTags = NSLocalizedString("Show Tags", comment: "Graph window option showing a note's tags in the inspector")
-    static let showOrphans = NSLocalizedString("Show Orphans", comment: "Graph window option including notes without links")
-    static let graphDepth = NSLocalizedString("Depth", comment: "Graph window control for how many links to walk")
-    static let graphNodeLimit = NSLocalizedString("Node Limit", comment: "Graph window control capping the number of notes")
-    static let graphReset = NSLocalizedString("Reset Layout", comment: "Graph window button restoring the automatic layout")
-    static let graphFit = NSLocalizedString("Fit to Window", comment: "Graph window button fitting the graph in view")
-    static let graphReheat = NSLocalizedString("Redraw", comment: "Graph window button re-running the layout")
-    static let graphOpenNote = NSLocalizedString("Open", comment: "Graph inspector button opening the selected note")
-    static let graphFilter = NSLocalizedString("Filter notes", comment: "Placeholder in the graph search field")
-    static let graphNoMatches = NSLocalizedString("No notes match the filter.", comment: "Graph empty state when a filter hides every note")
-    static let graphNoNotes = NSLocalizedString("No notes to graph yet", comment: "Graph empty state when the vault has no links")
-    static let graphNoNotesHint = NSLocalizedString("Link notes with [[wiki links]] to draw a graph.", comment: "Graph empty state hint")
-    static let selectGraphNode = NSLocalizedString("Select a note to see its links.", comment: "Graph inspector placeholder")
-    static let linkedNotesSection = NSLocalizedString("LINKS", comment: "Graph inspector section heading for outgoing links")
-    static let backlinksSection = NSLocalizedString("BACKLINKS", comment: "Graph inspector section heading for incoming links")
-    static let tagsSection = NSLocalizedString("TAGS", comment: "Graph inspector section heading for tags")
-    static let zoomInGraph = NSLocalizedString("Zoom In", comment: "Graph window zoom button")
-    static let zoomOutGraph = NSLocalizedString("Zoom Out", comment: "Graph window zoom button")
-    static let graphShowsCurrent = NSLocalizedString("Current note", comment: "Graph legend label for the highlighted note")
-    static let graphSettingsTitle = NSLocalizedString("Graph", comment: "Graph tab settings panel title")
-    static let graphShowSettings = NSLocalizedString("Show Graph Settings", comment: "Graph tab button expanding the settings panel")
-    static let graphHideSettings = NSLocalizedString("Hide Graph Settings", comment: "Graph tab button collapsing the settings panel")
-    static let graphDisplaySection = NSLocalizedString("DISPLAY", comment: "Graph tab settings section for visual options")
-    static let graphForcesSection = NSLocalizedString("FORCES", comment: "Graph tab settings section for physics sliders")
-    static let graphGroupsSection = NSLocalizedString("GROUPS", comment: "Graph tab settings section for tag and folder filters")
-    static let graphNodeSizeSetting = NSLocalizedString("Node size", comment: "Graph tab slider scaling every node")
-    static let graphCenterForceSetting = NSLocalizedString("Center force", comment: "Graph tab slider pulling nodes to the centre")
-    static let graphLinkDistanceSetting = NSLocalizedString("Link distance", comment: "Graph tab slider for preferred edge length")
-    static let graphLinkForceSetting = NSLocalizedString("Link force", comment: "Graph tab slider for edge attraction")
-    static let graphResetForces = NSLocalizedString("Reset", comment: "Graph tab button restoring the default forces")
-    static let graphTabTitle = NSLocalizedString("Graph", comment: "Title of the graph workspace tab")
-    static let graphTabHelp = NSLocalizedString("Open the graph of your vault", comment: "Help text for the graph tab")
-    static let closeGraphTab = NSLocalizedString("Close Graph Tab", comment: "Help text for closing the graph tab")
 
     // MARK: - Menu bar
 
@@ -348,12 +309,6 @@ enum L10n {
             : String(format: NSLocalizedString("%d notes", comment: "Tag row accessibility value"), count)
     }
 
-    static func linkedNotes(_ count: Int) -> String {
-        count == 1
-            ? NSLocalizedString("1 linked note", comment: "Backlinks pane count for one note")
-            : String(format: NSLocalizedString("%d linked notes", comment: "Backlinks pane count"), count)
-    }
-
     static func unlinkedMentions(_ count: Int) -> String {
         count == 1
             ? NSLocalizedString("1 unlinked mention", comment: "Unlinked mentions count for one mention")
@@ -362,18 +317,6 @@ enum L10n {
 
     static func unlinkedMentionHint(_ title: String) -> String {
         String(format: NSLocalizedString("Mentions of “%@” that are not links yet.", comment: "Unlinked mentions empty-state hint with the document name"), title)
-    }
-
-    static var graphScope: String {
-        NSLocalizedString("Graph scope", comment: "Graph pane scope picker accessibility label")
-    }
-
-    static var localGraph: String {
-        NSLocalizedString("Local", comment: "Graph pane local scope option")
-    }
-
-    static var vaultGraph: String {
-        NSLocalizedString("Vault", comment: "Graph pane whole-vault scope option")
     }
 
     static var unlinkedMentionsTitle: String {
@@ -430,24 +373,5 @@ enum L10n {
 
     static func openNotePath(_ path: String) -> String {
         String(format: NSLocalizedString("Open %@", comment: "Accessibility label for a sidebar note row with its path"), path)
-    }
-
-    static func graphStats(nodes: Int, links: Int) -> String {
-        String(
-            format: NSLocalizedString("%d notes · %d links", comment: "Graph window footer statistics"),
-            nodes,
-            links
-        )
-    }
-
-    static let graphTitleMenu = NSLocalizedString("Graph", comment: "Menu title shown while the graph window is key")
-    static let toggleInspector = NSLocalizedString("Toggle Inspector", comment: "Graph window command showing or hiding the inspector")
-    static let clearFilters = NSLocalizedString("Clear Filters", comment: "Graph window action removing every active filter")
-    static let openInMainWindow = NSLocalizedString("Open in Main Window", comment: "Graph inspector action opening the note in the editor")
-    static let graphCurrentNote = NSLocalizedString("Current note", comment: "Graph legend label for the highlighted note")
-    static let graphNoFilteredLinks = NSLocalizedString("None in view", comment: "Graph inspector placeholder when links exist but are filtered out")
-
-    static func graphFiltered(hidden: Int) -> String {
-        String(format: NSLocalizedString("%d hidden by the filter", comment: "Graph window notice about filtered notes"), hidden)
     }
 }

@@ -30,11 +30,7 @@ struct IrisEditorApp: App {
 
             CommandGroup(after: .newItem) {
                 Button(L10n.closeTabMenu) {
-                    if appState.isGraphTabActive {
-                        appState.closeGraphTab()
-                    } else {
-                        appState.closeTab(at: appState.currentTabIndex)
-                    }
+                    appState.closeTab(at: appState.currentTabIndex)
                 }
                 .irisKeyboardShortcut(appState.keyboardShortcut(for: .closeTab))
 
@@ -72,13 +68,13 @@ struct IrisEditorApp: App {
                     appState.selectNextTab()
                 }
                 .irisKeyboardShortcut(appState.keyboardShortcut(for: .nextTab))
-                .disabled(appState.tabs.count + (appState.isGraphTabOpen ? 1 : 0) < 2)
+                .disabled(appState.tabs.count < 2)
 
                 Button(L10n.previousTab) {
                     appState.selectPreviousTab()
                 }
                 .irisKeyboardShortcut(appState.keyboardShortcut(for: .previousTab))
-                .disabled(appState.tabs.count + (appState.isGraphTabOpen ? 1 : 0) < 2)
+                .disabled(appState.tabs.count < 2)
 
                 Divider()
 
@@ -338,11 +334,6 @@ struct IrisEditorApp: App {
                     appState.toggleStarForCurrentNote()
                 }
                 .irisKeyboardShortcut(appState.keyboardShortcut(for: .toggleStar))
-
-                Button(L10n.openGraphWindow) {
-                    appState.openGraphTab()
-                }
-                .irisKeyboardShortcut(appState.keyboardShortcut(for: .openGraphWindow))
 
                 Button(L10n.searchNotes) {
                     appState.setSidebarPane(.files)

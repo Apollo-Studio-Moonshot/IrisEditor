@@ -6,7 +6,7 @@ import Foundation
 ///
 /// Order matters: it is the order of the pane picker in the sidebar header.
 enum VaultPane: String, CaseIterable, Identifiable, Sendable {
-    case files, outline, tags, backlinks, stars, graph
+    case files, outline, tags, backlinks, stars
 
     var id: String { rawValue }
 
@@ -17,7 +17,6 @@ enum VaultPane: String, CaseIterable, Identifiable, Sendable {
         case .tags: "Tags"
         case .backlinks: "Backlinks"
         case .stars: "Starred"
-        case .graph: "Graph"
         }
     }
 
@@ -28,7 +27,6 @@ enum VaultPane: String, CaseIterable, Identifiable, Sendable {
         case .tags: "number"
         case .backlinks: "link"
         case .stars: "star"
-        case .graph: "point.3.connected.trianglepath.dotted"
         }
     }
 }
@@ -83,52 +81,6 @@ struct VaultSearchResult: Identifiable, Equatable, Sendable {
     let excerpt: String
 
     var id: String { "\(url.path)#\(line)" }
-}
-
-struct VaultGraphNode: Identifiable, Equatable, Sendable {
-    let id: String
-    let title: String
-    /// Folder relative to the vault root (`""` for notes at the root).
-    let folder: String
-    let isCurrent: Bool
-    /// Number of links touching this node inside the graph being displayed.
-    let linkCount: Int
-    /// Tags the note declares, used to group and filter the graph.
-    let tags: [String]
-}
-
-struct VaultGraphEdge: Identifiable, Equatable, Sendable {
-    let source: String
-    let target: String
-
-    var id: String { "\(source)->\(target)" }
-}
-
-struct VaultGraph: Equatable, Sendable {
-    let nodes: [VaultGraphNode]
-    let edges: [VaultGraphEdge]
-
-    static let empty = VaultGraph(nodes: [], edges: [])
-
-    /// Distinct folders represented in the graph, sorted for pickers.
-    var folders: [String] {
-        Set(nodes.map(\.folder)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    }
-
-    var tags: [String] {
-        Set(nodes.flatMap(\.tags)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    }
-
-    /// Graph with some nodes and every edge they carried removed.
-    func removing(nodesIDs ids: Set<String>) -> VaultGraph {
-        guard !ids.isEmpty else { return self }
-        let kept = nodes.filter { !ids.contains($0.id) }
-        let keptIDs = Set(kept.map(\.id))
-        return VaultGraph(
-            nodes: kept,
-            edges: edges.filter { keptIDs.contains($0.source) && keptIDs.contains($0.target) }
-        )
-    }
 }
 
 // MARK: - Scanner
@@ -390,167 +342,6 @@ enum VaultScanner {
             if lhs.line != rhs.line { return lhs.line < rhs.line }
             return lhs.sourceURL.path < rhs.sourceURL.path
         }
-    }
-
-    /// Nodes and edges for the current note plus its direct (or `depth`-step) neighbours.
-    ///
-    /// - Parameters:
-    ///   - depth: How many link hops to walk from the current note (clamped to 0…4).
-    ///   - limit: Upper bound on nodes in the result. The sidebar graph keeps the
-    ///     historical default of 60; the standalone graph window asks for more.
-    ///   - highlighting: Note rendered as "current" (defaults to `url`).
-    static func graph(
-        around url: URL?,
-        in files: [VaultFile],
-        depth: Int = 1,
-        limit: Int = 60,
-        highlighting highlight: URL? = nil
-    ) -> VaultGraph {
-        guard !files.isEmpty, limit > 0 else { return .empty }
-
-        let aliasMap = aliasMap(for: files)
-        var filesByPath: [String: VaultFile] = [:]
-        for file in files {
-            filesByPath[file.url.standardizedFileURL.path] = file
-        }
-
-        var outgoing: [String: Set<String>] = [:]
-        var tagsByPath: [String: [String]] = [:]
-        for file in files {
-            guard let text = readText(file.url) else { continue }
-            let source = file.url.standardizedFileURL.path
-            for target in wikiTargets(inText: text) {
-                if let resolved = resolveTarget(target, aliases: aliasMap, filesByPath: filesByPath) {
-                    outgoing[source, default: []].insert(resolved.standardizedFileURL.path)
-                }
-            }
-            tagsByPath[source] = tags(inText: text)
-        }
-
-        var neighbours: [String: Set<String>] = [:]
-        for (source, targets) in outgoing {
-            for target in targets {
-                neighbours[source, default: []].insert(target)
-                neighbours[target, default: []].insert(source)
-            }
-        }
-
-        var included: [String] = []
-        var includedSet = Set<String>()
-
-        if let url {
-            let start = url.standardizedFileURL.path
-            let maxDepth = max(0, min(depth, 4))
-            var frontier = [start]
-            included.append(start)
-            includedSet.insert(start)
-
-            var level = 0
-            while level < maxDepth, !frontier.isEmpty, included.count < limit {
-                var next: [String] = []
-                for node in frontier {
-                    for neighbour in (neighbours[node] ?? []).sorted() {
-                        guard included.count < limit else { break }
-                        if includedSet.insert(neighbour).inserted {
-                            included.append(neighbour)
-                            next.append(neighbour)
-                        }
-                    }
-                }
-                frontier = next
-                level += 1
-            }
-        } else {
-            let sorted = files.sorted { lhs, rhs in
-                let order = lhs.title.localizedStandardCompare(rhs.title)
-                if order != .orderedSame { return order == .orderedAscending }
-                return lhs.url.path < rhs.url.path
-            }
-            for file in sorted.prefix(limit) {
-                let path = file.url.standardizedFileURL.path
-                guard includedSet.insert(path).inserted else { continue }
-                included.append(path)
-            }
-        }
-
-        if included.count > limit {
-            included.removeLast(included.count - limit)
-            includedSet = Set(included)
-        }
-
-        // Node ids are the standardized file paths used everywhere else in the graph,
-        // so edges and the BFS frontier speak the same language. Normalizing here also
-        // keeps a note that links back to itself (via its own /private/var alias) out.
-        func nodeID(for path: String) -> String {
-            filesByPath[path]?.url.standardizedFileURL.path ?? URL(fileURLWithPath: path).standardizedFileURL.path
-        }
-
-        var edges: [VaultGraphEdge] = []
-        var seenEdges = Set<String>()
-        for (source, targets) in outgoing {
-            guard includedSet.contains(source) else { continue }
-            for target in targets where includedSet.contains(target) {
-                let from = nodeID(for: source)
-                let to = nodeID(for: target)
-                // Links pointing back at their own note are dropped so degrees stay meaningful.
-                guard from != to else { continue }
-                let edge = VaultGraphEdge(source: from, target: to)
-                guard seenEdges.insert(edge.id).inserted else { continue }
-                edges.append(edge)
-            }
-        }
-        edges.sort { lhs, rhs in
-            let sourceOrder = lhs.source.localizedStandardCompare(rhs.source)
-            if sourceOrder != .orderedSame { return sourceOrder == .orderedAscending }
-            return lhs.target.localizedStandardCompare(rhs.target) == .orderedAscending
-        }
-
-        var degree: [String: Int] = [:]
-        for edge in edges {
-            degree[edge.source, default: 0] += 1
-            degree[edge.target, default: 0] += 1
-        }
-
-        let currentPath = (highlight ?? url)?.standardizedFileURL.path
-        let nodes = included.map { path -> VaultGraphNode in
-            let file = filesByPath[path]
-            let title = file?.title
-                ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
-            let id = nodeID(for: path)
-            let folder: String
-            if let file, let root = commonAncestor(of: files) {
-                folder = relativeDirectory(of: file.url, in: root)
-            } else {
-                folder = ""
-            }
-            return VaultGraphNode(
-                id: id,
-                title: title,
-                folder: folder,
-                isCurrent: currentPath == path,
-                linkCount: degree[id] ?? 0,
-                tags: tagsByPath[path] ?? []
-            )
-        }
-
-        return VaultGraph(nodes: nodes, edges: edges)
-    }
-
-    /// Deepest directory that contains every file in `files`.
-    private static func commonAncestor(of files: [VaultFile]) -> URL? {
-        guard let first = files.first else { return nil }
-        var ancestor = first.url.deletingLastPathComponent().standardizedFileURL
-        let components = ancestor.pathComponents
-        for file in files.dropFirst() {
-            let dir = file.url.deletingLastPathComponent().standardizedFileURL.pathComponents
-            var shared = 0
-            while shared < components.count, shared < dir.count, components[shared] == dir[shared] {
-                shared += 1
-            }
-            guard shared > 0 else { return nil }
-            ancestor = URL(fileURLWithPath: NSString.path(withComponents: Array(components.prefix(shared))))
-        }
-        return ancestor
     }
 
     /// Case-insensitive substring search, one result per matching line.

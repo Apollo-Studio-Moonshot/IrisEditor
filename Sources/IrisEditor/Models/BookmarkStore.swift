@@ -118,17 +118,3 @@ enum VaultFileListing: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 }
-
-/// Scope selector for the standalone graph window.
-enum GraphScope: String, CaseIterable, Identifiable, Codable, Sendable {
-    case local, vault
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .local: L10n.localGraph
-        case .vault: L10n.vaultGraph
-        }
-    }
-}

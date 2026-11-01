@@ -130,11 +130,8 @@ final class AppState: ObservableObject {
     // MARK: - Vault
 
     /// Which pane the unified sidebar shows.
-    /// The graph pane shows the whole vault instead of the current note's neighbourhood.
-    @Published private(set) var showsGlobalGraph = false
-
     @Published var sidebarTab: VaultPane = .files {
-        didSet { if sidebarTab == .tags || sidebarTab == .backlinks || sidebarTab == .graph { refreshVaultIfNeeded() } }
+        didSet { if sidebarTab == .tags || sidebarTab == .backlinks { refreshVaultIfNeeded() } }
     }
 
     /// Folder that acts as the note vault. Defaults to the current document's folder.
@@ -145,7 +142,6 @@ final class AppState: ObservableObject {
     @Published private(set) var vaultBacklinks: [VaultBacklink] = []
     /// Plain-text mentions of the current note that are not wiki links yet.
     @Published private(set) var vaultUnlinkedMentions: [VaultBacklink] = []
-    @Published private(set) var vaultGraph = VaultGraph(nodes: [], edges: [])
     @Published private(set) var vaultTemplates: [URL] = []
 
     @Published var showVaultSearch = false
@@ -157,14 +153,6 @@ final class AppState: ObservableObject {
 
     /// Notes the user starred from the sidebar, newest first.
     @Published private(set) var starredNotes: [VaultBookmark] = BookmarkStore.load()
-
-    /// Obsidian-style graph tab living in the main window's tab strip.
-    ///
-    /// The tab is ephemeral (not persisted with the session) and sits after the last
-    /// document tab. `document` keeps pointing at the last active document while the
-    /// graph tab is in front, so switching back restores exactly what was being edited.
-    @Published private(set) var isGraphTabOpen = false
-    @Published private(set) var isGraphTabActive = false
 
     // MARK: - Wiki autocomplete
 
@@ -338,7 +326,6 @@ final class AppState: ObservableObject {
     func selectTab(at index: Int) {
         guard tabs.indices.contains(index) else { return }
         withAnimation(.snappy(duration: 0.24)) {
-            isGraphTabActive = false
             guard index != currentTabIndex else { return }
             currentTabIndex = index
             document = tabs[index]
@@ -352,46 +339,16 @@ final class AppState: ObservableObject {
         selectTab(at: number == 9 ? tabs.count - 1 : number - 1)
     }
 
-    /// Opens the graph as a workspace tab (Obsidian-style), or brings it to the front
-    /// when it is already open.
-    func openGraphTab() {
-        withAnimation(.snappy(duration: 0.28, extraBounce: 0.04)) {
-            isGraphTabOpen = true
-            isGraphTabActive = true
-        }
-        refreshVaultIfNeeded()
-    }
-
-    /// Closes the graph tab, returning focus to the active document tab.
-    func closeGraphTab() {
-        withAnimation(.snappy(duration: 0.22)) {
-            isGraphTabOpen = false
-            isGraphTabActive = false
-        }
-    }
-
-    /// Cycles forward through document tabs and the trailing graph tab.
+    /// Cycles forward through document tabs.
     func selectNextTab() {
         guard !tabs.isEmpty else { return }
-        if isGraphTabActive {
-            selectTab(at: 0)
-        } else if isGraphTabOpen && currentTabIndex == tabs.count - 1 {
-            withAnimation(.snappy(duration: 0.24)) { isGraphTabActive = true }
-        } else {
-            selectTab(at: (currentTabIndex + 1) % tabs.count)
-        }
+        selectTab(at: (currentTabIndex + 1) % tabs.count)
     }
 
-    /// Cycles backward through document tabs and the trailing graph tab.
+    /// Cycles backward through document tabs.
     func selectPreviousTab() {
         guard !tabs.isEmpty else { return }
-        if isGraphTabActive {
-            selectTab(at: tabs.count - 1)
-        } else if isGraphTabOpen && currentTabIndex == 0 {
-            withAnimation(.snappy(duration: 0.24)) { isGraphTabActive = true }
-        } else {
-            selectTab(at: (currentTabIndex - 1 + tabs.count) % tabs.count)
-        }
+        selectTab(at: (currentTabIndex - 1 + tabs.count) % tabs.count)
     }
 
     /// Closes a tab. Prompts to save or discard when its document is dirty; closing the
@@ -425,12 +382,6 @@ final class AppState: ObservableObject {
                 _ = tabs.remove(at: removalIndex)
             }
             EditorViewportStore.remove(documentID: target.id)
-            // With the graph tab still open the window stays alive; the graph simply
-            // becomes the only tab left.
-            if isGraphTabOpen {
-                withAnimation(.snappy(duration: 0.22)) { isGraphTabActive = true }
-                return
-            }
             (editorWindow ?? NSApp.keyWindow)?.close()
             return
         }
@@ -1538,7 +1489,6 @@ final class AppState: ObservableObject {
             vaultFiles = []
             vaultTags = []
             vaultBacklinks = []
-            vaultGraph = VaultGraph(nodes: [], edges: [])
             return
         }
 
@@ -1562,7 +1512,6 @@ final class AppState: ObservableObject {
                 self.vaultBacklinks = currentURL.map {
                     VaultScanner.backlinks(to: $0, in: files)
                 } ?? []
-                self.vaultGraph = VaultScanner.graph(around: currentURL, in: files)
                 self.refreshTemplates()
                 SpotlightIndexer.index(files: files)
             }
@@ -1585,37 +1534,6 @@ final class AppState: ObservableObject {
         let url = document.fileURL
         vaultBacklinks = url.map { VaultScanner.backlinks(to: $0, in: vaultFiles) } ?? []
         vaultUnlinkedMentions = url.map { VaultScanner.unlinkedMentions(of: $0, in: vaultFiles) } ?? []
-        vaultGraph = VaultScanner.graph(
-            around: showsGlobalGraph ? nil : url,
-            in: vaultFiles,
-            highlighting: url
-        )
-    }
-
-    /// Switches the graph pane between the current note's neighbourhood and the whole vault.
-    func setShowsGlobalGraph(_ shows: Bool) {
-        guard showsGlobalGraph != shows else { return }
-        showsGlobalGraph = shows
-        refreshBacklinks()
-    }
-
-    // MARK: - Graph tab
-
-    /// Builds the graph a tab should draw, honouring its own scope/filter settings.
-    func buildGraph(scope: GraphScope, depth: Int, limit: Int) -> VaultGraph {
-        let current = document.fileURL
-        switch scope {
-        case .vault:
-            return VaultScanner.graph(around: nil, in: vaultFiles, depth: depth, limit: limit, highlighting: current)
-        case .local:
-            return VaultScanner.graph(around: current, in: vaultFiles, depth: depth, limit: limit, highlighting: current)
-        }
-    }
-
-    /// Opens a note from the graph tab, switching the window back to its document tabs.
-    func openFromGraph(url: URL) {
-        open(url: url)
-        refreshBacklinks()
     }
 
     // MARK: - Sidebar: search

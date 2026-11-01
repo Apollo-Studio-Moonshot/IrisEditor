@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Unified Liquid Glass sidebar for the vault: files, outline, tags, backlinks, stars
-/// and a graph mini-map, plus a persistent note filter shared by every pane.
+/// and a persistent note filter shared by every pane.
 struct SidebarView: View {
     @EnvironmentObject private var appState: AppState
 
@@ -134,15 +134,6 @@ struct SidebarView: View {
             Spacer()
 
             IconButton(
-                systemImage: "macwindow.on.rectangle",
-                label: L10n.graphWindowHelp,
-                identifier: "Sidebar.OpenGraphWindow"
-            ) {
-                appState.openGraphTab()
-            }
-            .accessibilityLabel(L10n.openGraphWindow)
-
-            IconButton(
                 systemImage: "arrow.clockwise",
                 label: L10n.refreshVault,
                 identifier: "Sidebar.Refresh"
@@ -268,8 +259,6 @@ struct SidebarView: View {
             VaultBacklinksPane()
         case .stars:
             VaultStarsPane()
-        case .graph:
-            VaultGraphPane()
         }
     }
 
@@ -1333,103 +1322,6 @@ private struct BacklinkRow: View {
         .accessibilityLabel(link.sourceTitle)
         .accessibilityValue(link.excerpt)
         .accessibilityIdentifier("\(identifierPrefix).\(link.sourceURL.lastPathComponent)")
-    }
-}
-
-// MARK: - Graph
-
-private struct VaultGraphPane: View {
-    @EnvironmentObject private var appState: AppState
-    @State private var selectedNodeID: String?
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker(L10n.graphScope, selection: Binding(
-                get: { appState.showsGlobalGraph },
-                set: { appState.setShowsGlobalGraph($0) }
-            )) {
-                Text(L10n.localGraph).tag(false)
-                Text(L10n.vaultGraph).tag(true)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 8)
-            .padding(.bottom, 6)
-            .accessibilityIdentifier("Sidebar.GraphScope")
-
-            if appState.vaultGraph.nodes.isEmpty {
-                EmptyPane(
-                    icon: "point.3.connected.trianglepath.dotted",
-                    title: L10n.noLocalGraph,
-                    message: L10n.noLocalGraphHint
-                )
-            } else {
-                GraphCanvasView(
-                    graph: appState.vaultGraph,
-                    showsLabels: appState.vaultGraph.nodes.count <= 22,
-                    interactive: true,
-                    selectedNodeID: $selectedNodeID,
-                    onOpenNode: { nodeID in
-                        appState.open(url: URL(fileURLWithPath: nodeID))
-                        selectedNodeID = nil
-                    }
-                )
-                .padding(.horizontal, 6)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                if let selected = appState.vaultGraph.nodes.first(where: { $0.id == selectedNodeID }) {
-                    selectedNodeCard(selected)
-                }
-
-                HStack(spacing: 6) {
-                    Text(L10n.graphStats(
-                        nodes: appState.vaultGraph.nodes.count,
-                        links: appState.vaultGraph.edges.count
-                    ))
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(.quaternary)
-                    Spacer(minLength: 0)
-                    Button {
-                        appState.openGraphTab()
-                    } label: {
-                        Image(systemName: "arrow.up.forward.app")
-                            .font(.system(size: 9.5))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tertiary)
-                    .help(L10n.graphWindowHelp)
-                    .accessibilityLabel(L10n.openGraphWindow)
-                    .accessibilityIdentifier("Sidebar.GraphExpand")
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-            }
-        }
-    }
-
-    private func selectedNodeCard(_ node: VaultGraphNode) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "doc.text")
-                .font(.system(size: 9))
-                .foregroundStyle(.tertiary)
-            Text(node.title)
-                .font(.system(size: 10.5, weight: .medium))
-                .lineLimit(1)
-            Text(L10n.linkedNotes(node.linkCount))
-                .font(.system(size: 9))
-                .foregroundStyle(.quaternary)
-            Spacer(minLength: 0)
-            Button(L10n.graphOpenNote) {
-                appState.open(url: URL(fileURLWithPath: node.id))
-                selectedNodeID = nil
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 9.5))
-            .foregroundStyle(.tint)
-            .accessibilityIdentifier("Sidebar.GraphOpen")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
     }
 }
 

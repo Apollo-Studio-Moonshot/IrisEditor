@@ -4,7 +4,7 @@ A native **Markdown** editor for macOS, built with **SwiftUI**, **AppKit**, and 
 
 Iris Editor is a native Markdown editor **and** a local-first vault reader: syntax
 highlighting, a rendered preview, formatting shortcuts, find & replace, live stats,
-Liquid Glass window chrome — plus backlinks, unlinked mentions, a link graph, daily
+Liquid Glass window chrome — plus backlinks, unlinked mentions, daily
 notes, templates, properties, version history, and on-device AI. No Electron, no
 dependencies, no project bloat, and your notes stay plain `.md` files on disk.
 
@@ -65,13 +65,12 @@ dependencies, no project bloat, and your notes stay plain `.md` files on disk.
 - **Wiki links** — `[[Note]]`, `[[Note|Alias]]`, and `[[Note#Heading]]` links are highlighted
   in the editor and clickable in the preview; links resolve to open tabs, recent files, or
   notes beside the current document, and missing notes are created on demand
-- **Vault sidebar** — five panes driven by one scan of the vault: files (folder tree),
-  outline, tags (`#tag` counts), backlinks, and a local link graph
+- **Vault sidebar** — four panes driven by one scan of the vault: files (folder tree),
+  outline, tags (`#tag` counts), and backlinks
 - **Backlinks and unlinked mentions** — every `[[note]]` pointing at the current note is
   listed with its line and excerpt, and prose that mentions the title without linking it
   is listed separately; both jump straight to the line. Mentions inside fenced code and
-  on already-linked lines are excluded, and a progress toggle switches the graph between
-  the current note's neighbourhood and the whole vault
+  on already-linked lines are excluded
 - **Daily notes and templates** — `⇧⌘D` opens (or creates) today's note under
   `Daily Notes/yyyy-MM-dd.md`, and *Insert Template* applies any file from the vault's
   `Templates/` folder
@@ -260,7 +259,7 @@ IrisEditor/
 │   │   ├── SessionStore.swift        # Restores tabs, cursors, and view mode at launch
 │   │   ├── TextSearch.swift          # Pure search + line-index helpers (unit tested)
 │   │   ├── Transclusion.swift        # `![[…]]` request parsing, section/block slicing
-│   │   ├── Vault.swift               # Scanning, folders, tags, backlinks, mentions, graph, search
+│   │   ├── Vault.swift               # Scanning, folders, tags, backlinks, mentions, search
 │   │   ├── VersionHistoryStore.swift # Snapshot history per document path
 │   │   └── VimEngine.swift           # Pure modal-editing state machine (unit tested)
 │   ├── Services/
@@ -279,7 +278,7 @@ IrisEditor/
 │       ├── QuickCaptureView.swift    # Menu-bar quick capture window
 │       ├── QuickSwitcherView.swift   # Fuzzy open-tab / recent-file switcher
 │       ├── SettingsView.swift        # Settings: Editor, Appearance, Writing, AI, Keys, Plugins, Advanced
-│       ├── SidebarView.swift         # Files, outline, tags, backlinks + mentions, graph
+│       ├── SidebarView.swift         # Files, outline, tags, backlinks + mentions
 │       ├── StatusBarView.swift       # Cursor / counts / size readout
 │       ├── TabBarView.swift          # Animated document tabs with glass active pill
 │       ├── TextEditorView.swift      # NSTextView editor, line-number ruler, highlights
@@ -346,9 +345,6 @@ IrisEditor/
   builds the same alias set as `backlinks(to:in:)`, skips fenced code blocks and lines
   that already contain `[[`, masks inline code, and matches on word boundaries — so
   "Design notesmith" is not a mention of "Design notes"
-- **The graph is one function, two scopes.** `VaultScanner.graph(around:in:depth:highlighting:)`
-  takes a note for a local neighbourhood and `nil` for the whole vault (capped at 60
-  nodes), while `highlighting:` still marks the open note as current in vault scope
 - **OS citizenship is declarative where possible.** `Support/Info.plist` declares the
   `iriseditor` URL scheme and an `NSServices` entry; `AppDelegate` registers itself as
   `NSApp.servicesProvider` and `AppState.handleCaptureURL` routes
@@ -396,8 +392,8 @@ IrisEditor/
 Iris Editor is a native Markdown editor and local-first vault reader. Editing, syntax
 highlighting, preview, formatting, smart list continuation, HTML/PDF/RTF export,
 printing, find/replace, go-to-line, tabbed Settings, animated tabs, the quick switcher,
-command palette, the vault sidebar (files, outline, tags, backlinks, unlinked mentions,
-local and vault graphs), wiki links, footnotes, transclusions, properties, daily notes,
+command palette, the vault sidebar (files, outline, tags, backlinks, unlinked mentions),
+wiki links, footnotes, transclusions, properties, daily notes,
 templates, version history, Spotlight indexing, quick capture, Services and URL-scheme
 handling, themes, Vim/Emacs keymaps, the JavaScript plugin API, and the status bar are
 functional.
