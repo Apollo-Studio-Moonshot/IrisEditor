@@ -489,21 +489,27 @@ enum VaultScanner {
 
     /// Sorts a flat slice of notes for the files pane's "All Notes" listing.
     static func sorted(_ files: [VaultFile], by sort: VaultFileSort, ascending: Bool) -> [VaultFile] {
-        func compare(_ lhs: VaultFile, _ rhs: VaultFile) -> Bool {
-            let nameOrder = lhs.title.localizedStandardCompare(rhs.title)
+        func comparison(_ lhs: VaultFile, _ rhs: VaultFile) -> ComparisonResult {
+            let primary: ComparisonResult
             switch sort {
             case .name:
-                if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
-                return lhs.relativePath < rhs.relativePath
+                primary = lhs.relativePath.localizedStandardCompare(rhs.relativePath)
             case .modified, .created, .size:
                 let lhsValue = sortValue(lhs, sort: sort)
                 let rhsValue = sortValue(rhs, sort: sort)
-                if lhsValue != rhsValue { return lhsValue > rhsValue }
-                return nameOrder == .orderedAscending
+                if lhsValue != rhsValue {
+                    primary = lhsValue < rhsValue ? .orderedAscending : .orderedDescending
+                } else {
+                    primary = .orderedSame
+                }
             }
+            guard primary == .orderedSame else { return primary }
+            return lhs.relativePath.localizedStandardCompare(rhs.relativePath)
         }
-        let ordered = files.sorted(by: compare)
-        return ascending ? ordered.reversed() : ordered
+        return files.sorted { lhs, rhs in
+            let order = comparison(lhs, rhs)
+            return ascending ? order == .orderedAscending : order == .orderedDescending
+        }
     }
 
     private static func sortValue(_ file: VaultFile, sort: VaultFileSort) -> Date {
@@ -512,13 +518,17 @@ enum VaultScanner {
             .creationDateKey,
             .fileSizeKey
         ]) else {
-            return file.modified
+            switch sort {
+            case .name, .modified: return file.modified
+            case .created: return .distantPast
+            case .size: return Date(timeIntervalSince1970: 0)
+            }
         }
         switch sort {
         case .name, .modified:
             return values.contentModificationDate ?? file.modified
         case .created:
-            return values.creationDate ?? file.modified
+            return values.creationDate ?? .distantPast
         case .size:
             return Date(timeIntervalSince1970: TimeInterval(values.fileSize ?? 0))
         }
@@ -699,7 +709,11 @@ enum VaultScanner {
     // MARK: - Text helpers
 
     private static func readText(_ url: URL) -> String? {
-        try? String(contentsOf: url, encoding: .utf8)
+        var encoding: String.Encoding = .utf8
+        guard let text = try? String(contentsOf: url, usedEncoding: &encoding) else {
+            return try? String(contentsOf: url, encoding: .utf8)
+        }
+        return text
     }
 
     private static func normalizedLines(_ text: String) -> [String] {

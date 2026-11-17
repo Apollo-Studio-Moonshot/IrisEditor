@@ -123,15 +123,12 @@ struct VaultSidebarTests {
     }
 
     @Test func filesPaneOrderingIsStable() {
-        let older = file("Beta.md", modified: Date(timeIntervalSince1970: 10))
-        let newer = file("Alpha.md", modified: Date(timeIntervalSince1970: 20))
+        let alpha = file("Alpha.md", modified: Date(timeIntervalSince1970: 10))
+        let beta = file("Beta.md", modified: Date(timeIntervalSince1970: 10))
+        let files = [beta, alpha]
 
-        let byName = [older, newer].sorted {
-            $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
-        }
-        #expect(byName.map(\.name) == ["Alpha.md", "Beta.md"])
-
-        let byDate = [older, newer].sorted { $0.modified > $1.modified }
-        #expect(byDate.map(\.name) == ["Alpha.md", "Beta.md"])
+        #expect(VaultScanner.sorted(files, by: .name, ascending: true).map(\.name) == ["Alpha.md", "Beta.md"])
+        #expect(VaultScanner.sorted(files, by: .modified, ascending: false).map(\.name) == ["Beta.md", "Alpha.md"])
+        #expect(VaultScanner.sorted(files, by: .modified, ascending: true).map(\.name) == ["Alpha.md", "Beta.md"])
     }
 }

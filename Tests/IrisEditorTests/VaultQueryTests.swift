@@ -115,4 +115,18 @@ struct VaultQueryTests {
         #expect(VaultScanner.search("hello", in: files).count == 2)
         #expect(VaultScanner.search("match-case: hello", in: files).count == 1)
     }
+
+    @Test func vaultIndexReadsUTF16Markdown() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-utf16-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let note = directory.appendingPathComponent("note.md")
+        try "# UTF-16\n\n#idea\nneedle\n".write(to: note, atomically: true, encoding: .utf16)
+        let files = VaultScanner.markdownFiles(in: directory)
+
+        #expect(VaultScanner.tags(in: files).map(\.name) == ["idea"])
+        #expect(VaultScanner.search("needle", in: files).map(\.title) == ["note"])
+    }
 }

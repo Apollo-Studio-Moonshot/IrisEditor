@@ -1555,30 +1555,11 @@ final class AppState: ObservableObject {
 
     /// Orders files for the sidebar according to the saved sort settings.
     func sortedFiles(_ files: [VaultFile]) -> [VaultFile] {
-        let ascending = settings.vaultFileSortAscending
-        let sort = settings.vaultFileSort
-        return files.sorted { lhs, rhs in
-            let ordered: Bool
-            switch sort {
-            case .name:
-                let comparison = lhs.relativePath.localizedStandardCompare(rhs.relativePath)
-                if comparison == .orderedSame { return false }
-                ordered = comparison == .orderedAscending
-            case .modified:
-                ordered = lhs.modified < rhs.modified
-            case .created:
-                let left = creationDate(of: lhs.url)
-                let right = creationDate(of: rhs.url)
-                if left == right { return false }
-                ordered = left < right
-            case .size:
-                let left = fileSize(of: lhs.url)
-                let right = fileSize(of: rhs.url)
-                if left == right { return false }
-                ordered = left < right
-            }
-            return ascending ? ordered : !ordered
-        }
+        VaultScanner.sorted(
+            files,
+            by: settings.vaultFileSort,
+            ascending: settings.vaultFileSortAscending
+        )
     }
 
     /// Notes edited most recently first, for the Recent listing.
@@ -1600,16 +1581,6 @@ final class AppState: ObservableObject {
     var currentVaultStars: [VaultBookmark] {
         guard let root = effectiveVaultRoot?.standardizedFileURL else { return starredNotes }
         return starredNotes.filter { $0.vaultRoot?.standardizedFileURL == root }
-    }
-
-    private func creationDate(of url: URL) -> Date {
-        let values = try? url.resourceValues(forKeys: [.creationDateKey])
-        return values?.creationDate ?? .distantPast
-    }
-
-    private func fileSize(of url: URL) -> Int {
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
-        return values?.fileSize ?? 0
     }
 
     // MARK: - Sidebar: stars
