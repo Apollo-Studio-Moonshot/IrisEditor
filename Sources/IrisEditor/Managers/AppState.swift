@@ -382,6 +382,7 @@ final class AppState: ObservableObject {
                 _ = tabs.remove(at: removalIndex)
             }
             EditorViewportStore.remove(documentID: target.id)
+            saveSession()
             (editorWindow ?? NSApp.keyWindow)?.close()
             return
         }
@@ -413,6 +414,7 @@ final class AppState: ObservableObject {
                 document = tabs[next]
             }
         }
+        saveSession()
     }
 
     func openDocument() {
@@ -519,6 +521,12 @@ final class AppState: ObservableObject {
                 && $0.deletingPathExtension().lastPathComponent.caseInsensitiveCompare(baseName) == .orderedSame
         }) {
             open(url: recent)
+            revealHeading(named: heading)
+            return
+        }
+
+        if let file = VaultScanner.resolve(rawNote, in: vaultFiles) {
+            open(url: file.url)
             revealHeading(named: heading)
             return
         }

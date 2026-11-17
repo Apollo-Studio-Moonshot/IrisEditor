@@ -539,9 +539,11 @@ enum VaultScanner {
         var seen = Set<String>()
         var titles: [String] = []
         for file in files {
-            let key = file.title.lowercased()
-            guard !key.isEmpty, seen.insert(key).inserted else { continue }
-            titles.append(file.title)
+            for title in [file.title] + aliases(in: file) {
+                let key = title.lowercased()
+                guard !key.isEmpty, seen.insert(key).inserted else { continue }
+                titles.append(title)
+            }
         }
         return titles.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
@@ -651,8 +653,28 @@ enum VaultScanner {
             for key in keys where !key.isEmpty {
                 if map[key] == nil { map[key] = file.url }
             }
+            for alias in aliases(in: file) {
+                let key = alias.lowercased()
+                if map[key] == nil { map[key] = file.url }
+            }
         }
         return map
+    }
+
+    private static func aliases(in file: VaultFile) -> [String] {
+        guard let text = readText(file.url),
+              let frontmatter = MarkdownFrontmatterParser.parse(text) else {
+            return []
+        }
+        return ["aliases", "alias"].flatMap { key in
+            frontmatter.field(named: key)?
+                .split(separator: ",")
+                .map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                }
+                .filter { !$0.isEmpty } ?? []
+        }
     }
 
     private static func resolveTarget(

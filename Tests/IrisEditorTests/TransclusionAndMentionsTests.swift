@@ -191,6 +191,29 @@ struct TransclusionAndMentionsTests {
         #expect(VaultScanner.resolve("Missing", in: files) == nil)
     }
 
+    @Test func resolvesAndSuggestsFrontmatterAliases() throws {
+        let root = try makeVault([
+            "Design notes.md": """
+            ---
+            aliases:
+              - the brief
+              - design doc
+            alias: [brief, "design brief"]
+            ---
+            # Design notes
+            """,
+            "Journal.md": "[[the brief]]\n"
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = VaultScanner.markdownFiles(in: root)
+
+        let target = VaultScanner.resolve("THE BRIEF", in: files)
+        #expect(target?.title == "Design notes")
+        #expect(VaultScanner.allWikiTargets(in: files).contains("the brief"))
+        #expect(VaultScanner.resolve("design brief", in: files)?.title == "Design notes")
+        #expect(target.map { VaultScanner.backlinks(to: $0.url, in: files).count } == 1)
+    }
+
     @Test func findsUnlinkedMentionsOnWordBoundaries() throws {
         let root = try makeVault([
             "Design notes.md": "# Design notes\n",
