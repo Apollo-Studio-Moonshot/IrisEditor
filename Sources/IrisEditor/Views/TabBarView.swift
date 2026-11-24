@@ -11,7 +11,7 @@ struct TabBarView: View {
     @Namespace private var activePill
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
@@ -35,6 +35,8 @@ struct TabBarView: View {
                                 )
                             )
                         }
+
+                        newTabButton
                     }
                     .padding(.horizontal, 8)
                     .animation(.snappy(duration: 0.28, extraBounce: 0.06), value: appState.tabs.map(\.id))
@@ -52,25 +54,31 @@ struct TabBarView: View {
                     }
                 }
             }
-
-            Button {
-                appState.newDocument()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 24, height: 24)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.borderless)
-            .help(L10n.newTabHelp)
-            .accessibilityLabel(L10n.newTabMenu)
-            .accessibilityIdentifier("TabBar.NewTab")
-            .padding(.trailing, 8)
-
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .font(.system(size: 12))
-        .frame(height: 32)
+        .frame(height: 34)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor).opacity(0.35))
+                .frame(height: 0.5)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var newTabButton: some View {
+        Button {
+            appState.newDocument()
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 24, height: 24)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.borderless)
+        .help(L10n.newTabHelp)
+        .accessibilityLabel(L10n.newTabMenu)
+        .accessibilityIdentifier("TabBar.NewTab")
     }
 }
 
@@ -106,25 +114,29 @@ private struct TabItemView: View {
                     .help(L10n.unsavedChanges)
             }
 
-            if showsCloseButton {
-                Button {
-                    appState.closeTab(at: index)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 14, height: 14)
-                        .background {
-                            Circle()
-                                .fill(Color(nsColor: .quaternaryLabelColor).opacity(isHovered ? 0.8 : 0))
-                        }
+            // Always reserve the close slot so hovering does not resize the tab.
+            ZStack {
+                if showsCloseButton {
+                    Button {
+                        appState.closeTab(at: index)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 14, height: 14)
+                            .background {
+                                Circle()
+                                    .fill(Color(nsColor: .quaternaryLabelColor).opacity(isHovered ? 0.8 : 0))
+                            }
+                    }
+                    .buttonStyle(.borderless)
+                    .help(L10n.closeTab(tab.displayName))
+                    .accessibilityLabel(L10n.closeTab(tab.displayName))
+                    .accessibilityIdentifier("TabBar.Close.\(tab.id.uuidString)")
+                    .transition(.scale(scale: 0.5).combined(with: .opacity))
                 }
-                .buttonStyle(.borderless)
-                .help(L10n.closeTab(tab.displayName))
-                .accessibilityLabel(L10n.closeTab(tab.displayName))
-                .accessibilityIdentifier("TabBar.Close.\(tab.id.uuidString)")
-                .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
+            .frame(width: 14, height: 14)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -132,9 +144,9 @@ private struct TabItemView: View {
             if isActive {
                 GlassBackdrop(style: .regular, cornerRadius: 8, interactive: true)
                     .matchedGeometryEffect(id: "active-tab-pill", in: namespace)
-            } else {
+            } else if isHovered {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(nsColor: .quaternaryLabelColor).opacity(isHovered ? 0.55 : 0.3))
+                    .fill(Color(nsColor: .quaternaryLabelColor).opacity(0.55))
             }
         }
         .overlay {

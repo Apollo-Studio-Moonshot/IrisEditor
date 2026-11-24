@@ -252,6 +252,26 @@ enum L10n {
     static let emptySnapshot = NSLocalizedString("(Empty snapshot)", comment: "Placeholder for an empty version snapshot")
     static let restore = NSLocalizedString("Restore", comment: "Version history restore button")
     static let headingOne = NSLocalizedString("Heading 1", comment: "Toolbar help for the H1 format button")
+    static let viewSource = NSLocalizedString("Source", comment: "Editor view mode showing Markdown source")
+    static let viewSplit = NSLocalizedString("Split", comment: "Editor view mode showing source and preview")
+    static let viewPreview = NSLocalizedString("Preview", comment: "Editor view mode showing the rendered note")
+    static let previewModeHelp = NSLocalizedString("Source, split, or preview (⌥⌘P)", comment: "Toolbar help for the view mode control")
+    static let numberedList = NSLocalizedString("Numbered List", comment: "Toolbar button applying a numbered list")
+    static let findFieldPlaceholder = NSLocalizedString("Find", comment: "Placeholder in the find field")
+    static let replaceFieldPlaceholder = NSLocalizedString("Replace with", comment: "Placeholder in the replace field")
+    static let matchCase = NSLocalizedString("Match Case", comment: "Find option matching letter case")
+    static let wholeWord = NSLocalizedString("Whole Word", comment: "Find option matching whole words")
+    static let previousMatch = NSLocalizedString("Previous Match", comment: "Find button for the previous match")
+    static let nextMatch = NSLocalizedString("Next Match", comment: "Find button for the next match")
+    static let showReplace = NSLocalizedString("Show Replace", comment: "Button revealing the replace field")
+    static let hideReplace = NSLocalizedString("Hide Replace", comment: "Button hiding the replace field")
+    static let replace = NSLocalizedString("Replace", comment: "Button replacing the current find match")
+    static let replaceAll = NSLocalizedString("Replace All", comment: "Button replacing every find match")
+    static let notFound = NSLocalizedString("Not found", comment: "Find status when the query has no matches")
+    static let lineNumberPlaceholder = NSLocalizedString("Line number", comment: "Placeholder in the go-to-line field")
+    static let goButton = NSLocalizedString("Go", comment: "Button jumping to the entered line number")
+    static let noHeadingsYet = NSLocalizedString("No headings yet", comment: "Outline empty state title")
+    static let noHeadingsHint = NSLocalizedString("Add a # heading to see it here.", comment: "Outline empty state hint")
 
     // MARK: - Interpolated helpers
 
@@ -325,6 +345,24 @@ enum L10n {
 
     static func backlinksHint(_ title: String) -> String {
         String(format: NSLocalizedString("Notes linking to [[%@]] appear here.", comment: "Backlinks empty-state hint with the document name"), title)
+    }
+
+    static func headingLevel(_ level: Int) -> String {
+        String(format: NSLocalizedString("Heading %d", comment: "Menu item setting an ATX heading level"), level)
+    }
+
+    static func matchIndex(current: Int, total: Int) -> String {
+        String(format: NSLocalizedString("%d of %d", comment: "Find match position out of the total"), current, total)
+    }
+
+    static func matchCount(_ count: Int) -> String {
+        count == 1
+            ? NSLocalizedString("1 match", comment: "Find status for a single match")
+            : String(format: NSLocalizedString("%d matches", comment: "Find status for several matches"), count)
+    }
+
+    static func lineCountOf(_ count: Int) -> String {
+        String(format: NSLocalizedString("of %d", comment: "Go to line total line count"), count)
     }
 
     static func cursorPosition(line: Int, column: Int) -> String {

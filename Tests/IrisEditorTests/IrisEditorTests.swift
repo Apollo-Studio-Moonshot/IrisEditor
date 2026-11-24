@@ -234,6 +234,46 @@ struct MarkdownFormattingTests {
         #expect(unwrapped?.text == "Title")
     }
 
+    @Test func headingLevelReplacesTheExistingMarker() {
+        let promoted = MarkdownFormatting.toggle(
+            text: "# Title",
+            selection: NSRange(location: 0, length: 7),
+            prefix: "## "
+        )
+        #expect(promoted?.text == "## Title")
+
+        let indented = MarkdownFormatting.toggle(
+            text: "  # Title",
+            selection: NSRange(location: 0, length: 9),
+            prefix: "## "
+        )
+        #expect(indented?.text == "  ## Title")
+
+        let cleared = MarkdownFormatting.toggle(
+            text: "## Title",
+            selection: NSRange(location: 0, length: 8),
+            prefix: "## "
+        )
+        #expect(cleared?.text == "Title")
+    }
+
+    @Test func orderedListNumbersEachLineAndTogglesOff() {
+        let text = "alpha\nbeta"
+        let wrapped = MarkdownFormatting.toggle(
+            text: text,
+            selection: NSRange(location: 0, length: (text as NSString).length),
+            prefix: "1. "
+        )
+        #expect(wrapped?.text == "1. alpha\n2. beta")
+
+        let renumbered = MarkdownFormatting.toggle(
+            text: "1. alpha\n1. beta",
+            selection: NSRange(location: 0, length: 16),
+            prefix: "1. "
+        )
+        #expect(renumbered?.text == "alpha\nbeta")
+    }
+
     @Test func linePrefixTogglesEachLineInMultiLineSelection() {
         let text = "alpha\nbeta\ngamma"
         let wrapped = MarkdownFormatting.toggle(

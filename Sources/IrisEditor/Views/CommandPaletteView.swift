@@ -32,7 +32,7 @@ struct CommandPaletteView: View {
                 appState.openDocument()
             },
             PaletteCommand(title: "Quick Switcher…", icon: "rectangle.stack", shortcut: "⌘P") {
-                appState.showQuickSwitcher = true
+                appState.openQuickSwitcher()
             },
             PaletteCommand(title: "Save", icon: "square.and.arrow.down", shortcut: "⌘S") {
                 _ = appState.saveDocument()

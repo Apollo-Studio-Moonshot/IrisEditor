@@ -27,13 +27,8 @@ struct FindReplacePanel: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(width: 560)
-        .background {
-            GlassBackdrop(style: .regular, cornerRadius: 16, interactive: true)
-        }
-        .shadow(color: .black.opacity(0.22), radius: 18, y: 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .onExitCommand {
             appState.closeFindPanel()
         }
@@ -58,21 +53,22 @@ struct FindReplacePanel: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
 
-            TextField("Find", text: $appState.findText)
+            TextField(L10n.findFieldPlaceholder, text: $appState.findText)
                 .textFieldStyle(.roundedBorder)
                 .focused($focus, equals: .find)
                 .onSubmit {
                     appState.performFind(forward: true)
                 }
 
-            toggleOption("Aa", isOn: $appState.findCaseSensitive, help: "Match Case")
-            toggleOption("ab", isOn: $appState.findWholeWord, help: "Whole Word")
+            toggleOption("Aa", isOn: $appState.findCaseSensitive, help: L10n.matchCase)
+            toggleOption("ab", isOn: $appState.findWholeWord, help: L10n.wholeWord)
 
             Text(matchSummary)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
-                .frame(minWidth: 68, alignment: .leading)
+                .lineLimit(1)
+                .frame(minWidth: 72, alignment: .leading)
 
             Button {
                 appState.performFind(forward: false)
@@ -81,7 +77,7 @@ struct FindReplacePanel: View {
             }
             .buttonStyle(.borderless)
             .disabled(appState.findMatches.isEmpty)
-            .help("Previous Match")
+            .help(L10n.previousMatch)
 
             Button {
                 appState.performFind(forward: true)
@@ -90,7 +86,7 @@ struct FindReplacePanel: View {
             }
             .buttonStyle(.borderless)
             .disabled(appState.findMatches.isEmpty)
-            .help("Next Match")
+            .help(L10n.nextMatch)
 
             Button {
                 model.showsReplaceField.toggle()
@@ -98,7 +94,7 @@ struct FindReplacePanel: View {
                 Image(systemName: "arrow.triangle.2.circlepath")
             }
             .buttonStyle(.borderless)
-            .help(model.showsReplaceField ? "Hide Replace" : "Show Replace")
+            .help(model.showsReplaceField ? L10n.hideReplace : L10n.showReplace)
 
             closeButton
         }
@@ -110,35 +106,37 @@ struct FindReplacePanel: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
 
-            TextField("Replace with", text: $appState.replaceText)
+            TextField(L10n.replaceFieldPlaceholder, text: $appState.replaceText)
                 .textFieldStyle(.roundedBorder)
                 .focused($focus, equals: .replace)
                 .onSubmit {
                     appState.replaceCurrentMatch()
                 }
 
-            Button("Replace") {
+            Button(L10n.replace) {
                 appState.replaceCurrentMatch()
             }
+            .controlSize(.small)
             .disabled(appState.findMatchIndex < 0)
 
-            Button("All") {
+            Button(L10n.replaceAll) {
                 appState.replaceAllMatches()
             }
+            .controlSize(.small)
             .disabled(appState.findMatches.isEmpty)
         }
-        .padding(.leading, 24)
     }
 
     private var matchSummary: String {
         guard !appState.findText.isEmpty else { return "" }
-        if appState.findMatches.isEmpty { return "Not found" }
+        if appState.findMatches.isEmpty { return L10n.notFound }
         if appState.findMatchIndex >= 0 {
-            return "\(appState.findMatchIndex + 1) of \(appState.findMatches.count)"
+            return L10n.matchIndex(
+                current: appState.findMatchIndex + 1,
+                total: appState.findMatches.count
+            )
         }
-        return appState.findMatches.count == 1
-            ? "1 match"
-            : "\(appState.findMatches.count) matches"
+        return L10n.matchCount(appState.findMatches.count)
     }
 
     // MARK: - Go to line
@@ -149,19 +147,20 @@ struct FindReplacePanel: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
 
-            TextField("Line number", text: $model.lineText)
+            TextField(L10n.lineNumberPlaceholder, text: $model.lineText)
                 .textFieldStyle(.roundedBorder)
                 .focused($focus, equals: .line)
                 .onSubmit(goToLine)
 
-            Text("of \(appState.document.lineCount)")
+            Text(L10n.lineCountOf(appState.document.lineCount))
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
                 .frame(minWidth: 68, alignment: .leading)
 
-            Button("Go", action: goToLine)
+            Button(L10n.goButton, action: goToLine)
                 .buttonStyle(.borderedProminent)
+                .controlSize(.small)
                 .disabled(lineNumber == nil)
 
             closeButton
@@ -185,6 +184,8 @@ struct FindReplacePanel: View {
         }
         .buttonStyle(.borderless)
         .help(help)
+        .accessibilityLabel(help)
+        .accessibilityValue(isOn.wrappedValue ? L10n.selected : L10n.notSelected)
     }
 
     private var closeButton: some View {
@@ -196,7 +197,7 @@ struct FindReplacePanel: View {
         }
         .buttonStyle(.borderless)
         .keyboardShortcut(.cancelAction)
-        .help("Close")
+        .help(L10n.close)
     }
 
     // MARK: - Actions

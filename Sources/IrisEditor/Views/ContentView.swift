@@ -35,22 +35,8 @@ struct ContentView: View {
                             .transition(.move(edge: .leading).combined(with: .opacity))
                     }
 
-                    VStack(spacing: 0) {
-                        if (appState.showFindReplace || appState.showGoToLine)
-                            && !appState.isZenMode {
-                            FindReplacePanel()
-                                .padding(.top, 10)
-                                .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-
-                        if appState.viewMode != .preview && !appState.isZenMode {
-                            markdownToolbar
-                                .transition(.opacity)
-                        }
-
-                        editorCard
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    editorCard
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
                 if !appState.isZenMode {
@@ -65,7 +51,8 @@ struct ContentView: View {
         .overlay(alignment: .bottom) {
             if appState.showWikiSuggestions && !appState.showCommandPalette && !appState.showQuickSwitcher {
                 WikiSuggestionBar()
-                    .padding(.bottom, 42)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 36)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -92,6 +79,23 @@ struct ContentView: View {
         .navigationTitle(appState.document.displayName)
         .navigationSubtitle(appState.document.fileURL?.deletingLastPathComponent().path ?? "")
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    appState.toggleOutline()
+                } label: {
+                    Label(L10n.sidebarButton, systemImage: "sidebar.left")
+                }
+                .help(L10n.toggleSidebarHelp)
+                .accessibilityLabel(L10n.toggleVaultSidebar)
+                .accessibilityIdentifier("Toolbar.Sidebar")
+            }
+
+            ToolbarItem(placement: .primaryAction) {
+                viewModePicker
+            }
+
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     appState.newDocument()
@@ -121,6 +125,39 @@ struct ContentView: View {
                 .accessibilityIdentifier("Toolbar.Save")
             }
 
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    appState.showFindReplace.toggle()
+                } label: {
+                    Label(L10n.findButton, systemImage: "magnifyingglass")
+                }
+                .help(L10n.findHelp)
+                .accessibilityLabel(L10n.findButton)
+                .accessibilityIdentifier("Toolbar.Find")
+
+                Button {
+                    appState.showGoToLine.toggle()
+                } label: {
+                    Label(L10n.goToLine, systemImage: "arrow.down.to.line")
+                }
+                .help(L10n.goToLineHelp)
+                .accessibilityLabel(L10n.goToLine)
+                .accessibilityIdentifier("Toolbar.GoToLine")
+
+                Button {
+                    appState.toggleVaultSearch()
+                } label: {
+                    Label(L10n.searchVaultButton, systemImage: "text.magnifyingglass")
+                }
+                .help(L10n.searchAllNotesHelp)
+                .accessibilityLabel(L10n.searchAllNotes)
+                .accessibilityIdentifier("Toolbar.SearchVault")
+            }
+
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     appState.toggleQuickSwitcher()
@@ -132,27 +169,18 @@ struct ContentView: View {
                 .accessibilityIdentifier("Toolbar.QuickSwitcher")
 
                 Button {
-                    appState.toggleOutline()
+                    appState.toggleCommandPalette()
                 } label: {
-                    Label(L10n.sidebarButton, systemImage: "sidebar.left")
+                    Label(L10n.commandPaletteButton, systemImage: "command")
                 }
-                .help(L10n.toggleSidebarHelp)
-                .accessibilityLabel(L10n.toggleVaultSidebar)
-                .accessibilityIdentifier("Toolbar.Sidebar")
-
-                Button {
-                    appState.toggleVaultSearch()
-                } label: {
-                    Label(L10n.searchVaultButton, systemImage: "text.magnifyingglass")
-                }
-                .help(L10n.searchAllNotesHelp)
-                .accessibilityLabel(L10n.searchAllNotes)
-                .accessibilityIdentifier("Toolbar.SearchVault")
+                .help(L10n.commandPaletteHelp)
+                .accessibilityLabel(L10n.commandPalette)
+                .accessibilityIdentifier("Toolbar.CommandPalette")
 
                 Button {
                     appState.toggleZenMode()
                 } label: {
-                    Label(L10n.zenButton, systemImage: "rectangle.expand.vertical")
+                    Label(L10n.zenButton, systemImage: appState.isZenMode ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
                 }
                 .help(L10n.zenModeHelp)
                 .accessibilityLabel(L10n.zenMode)
@@ -191,44 +219,6 @@ struct ContentView: View {
                 .help(appState.ai.availabilityDescription)
                 .accessibilityLabel(L10n.writingAssistant)
                 .accessibilityIdentifier("Toolbar.AI")
-
-                Button {
-                    appState.showFindReplace.toggle()
-                } label: {
-                    Label(L10n.findButton, systemImage: "magnifyingglass")
-                }
-                .help(L10n.findHelp)
-                .accessibilityLabel(L10n.findButton)
-                .accessibilityIdentifier("Toolbar.Find")
-
-                Button {
-                    appState.showGoToLine.toggle()
-                } label: {
-                    Label(L10n.goToLine, systemImage: "arrow.up.arrow.down")
-                }
-                .help(L10n.goToLineHelp)
-                .accessibilityLabel(L10n.goToLine)
-                .accessibilityIdentifier("Toolbar.GoToLine")
-
-                Button {
-                    appState.viewMode = appState.viewMode.next
-                } label: {
-                    Label(L10n.previewButton, systemImage: appState.viewMode.toolbarIcon)
-                }
-                .help(appState.viewMode.toolbarHelp)
-                .accessibilityLabel(L10n.previewButton)
-                .accessibilityIdentifier("Toolbar.Preview")
-            }
-
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    appState.toggleCommandPalette()
-                } label: {
-                    Label(L10n.commandPaletteButton, systemImage: "command")
-                }
-                .help(L10n.commandPaletteHelp)
-                .accessibilityLabel(L10n.commandPalette)
-                .accessibilityIdentifier("Toolbar.CommandPalette")
             }
 
             ToolbarItem(placement: .primaryAction) {
@@ -334,22 +324,40 @@ struct ContentView: View {
         }
     }
 
+    private var showsEditorChrome: Bool {
+        !appState.isZenMode
+    }
+
     private var editorCard: some View {
         ZStack {
             GlassBackdrop(style: .regular, cornerRadius: 14, interactive: true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if let second = appState.secondDocument {
-                HSplitView {
-                    primaryContent
-                        .frame(minWidth: 280)
-                    secondaryPane(second)
-                        .frame(minWidth: 280)
+            VStack(spacing: 0) {
+                if showsEditorChrome && (appState.showFindReplace || appState.showGoToLine) {
+                    FindReplacePanel()
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    chromeHairline
                 }
-                .clipShape(.rect(cornerRadius: 13))
-            } else {
-                primaryContent
+
+                if showsEditorChrome && appState.viewMode != .preview {
+                    markdownToolbar
+                        .transition(.opacity)
+                    chromeHairline
+                }
+
+                if let second = appState.secondDocument {
+                    HSplitView {
+                        primaryContent
+                            .frame(minWidth: 280)
+                        secondaryPane(second)
+                            .frame(minWidth: 280)
+                    }
+                } else {
+                    primaryContent
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .clipShape(.rect(cornerRadius: 14))
         .overlay {
@@ -457,65 +465,126 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var viewModePicker: some View {
+        Picker(L10n.previewButton, selection: $appState.viewMode) {
+            ForEach(EditorViewMode.allCases, id: \.self) { mode in
+                Image(systemName: mode.toolbarIcon)
+                    .tag(mode)
+                    .accessibilityLabel(mode.title)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 148)
+        .help(L10n.previewModeHelp)
+        .accessibilityLabel(L10n.previewButton)
+        .accessibilityIdentifier("Toolbar.Preview")
+    }
+
+    private var chromeHairline: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor).opacity(0.45))
+            .frame(height: 0.5)
+            .allowsHitTesting(false)
+    }
+
     private var markdownToolbar: some View {
-        HStack(spacing: 8) {
-            formatButton("H1", prefix: "# ", help: L10n.headingOne)
-            formatButton("B", prefix: "**", help: L10n.bold)
-            formatButton("I", prefix: "*", help: L10n.italic)
-            formatButton("`", prefix: "`", help: L10n.inlineCode)
-            formatButton("S", prefix: "~~", help: L10n.strikethrough)
-
-            Divider()
-                .frame(height: 16)
-
-            Button {
-                appState.toggleMarkdownFormat(prefix: "- ")
+        HStack(spacing: 2) {
+            Menu {
+                headingButton(L10n.headingLevel(1), prefix: "# ")
+                headingButton(L10n.headingLevel(2), prefix: "## ")
+                headingButton(L10n.headingLevel(3), prefix: "### ")
             } label: {
-                Image(systemName: "list.bullet")
+                Image(systemName: "textformat.size")
+                    .frame(width: 26, height: 22)
             }
-            .help(L10n.bulletedList)
-            .accessibilityLabel(L10n.bulletedList)
-            .accessibilityIdentifier("Toolbar.BulletedList")
+            .menuIndicator(.hidden)
+            .help(L10n.heading)
+            .accessibilityLabel(L10n.heading)
+            .accessibilityIdentifier("Toolbar.Heading")
 
-            Button {
-                appState.toggleMarkdownFormat(prefix: "> ")
-            } label: {
-                Image(systemName: "text.quote")
-            }
-            .help(L10n.blockQuote)
-            .accessibilityLabel(L10n.blockQuote)
-            .accessibilityIdentifier("Toolbar.BlockQuote")
+            toolbarDivider
+
+            formatButton(systemImage: "bold", prefix: "**", help: L10n.bold)
+            formatButton(systemImage: "italic", prefix: "*", help: L10n.italic)
+            formatButton(systemImage: "strikethrough", prefix: "~~", help: L10n.strikethrough)
+            formatButton(
+                systemImage: "chevron.left.forwardslash.chevron.right",
+                prefix: "`",
+                help: L10n.inlineCode
+            )
+
+            toolbarDivider
+
+            formatButton(
+                systemImage: "list.bullet",
+                prefix: "- ",
+                help: L10n.bulletedList,
+                identifier: "Toolbar.BulletedList"
+            )
+            formatButton(
+                systemImage: "list.number",
+                prefix: "1. ",
+                help: L10n.numberedList,
+                identifier: "Toolbar.NumberedList"
+            )
+            formatButton(
+                systemImage: "text.quote",
+                prefix: "> ",
+                help: L10n.blockQuote,
+                identifier: "Toolbar.BlockQuote"
+            )
 
             Button {
                 appState.insertSnippet(Self.tableTemplate)
             } label: {
                 Image(systemName: "tablecells")
+                    .frame(width: 26, height: 22)
             }
             .help(L10n.insertTable)
             .accessibilityLabel(L10n.insertTable)
             .accessibilityIdentifier("Toolbar.InsertTable")
 
-            Spacer()
+            Spacer(minLength: 0)
         }
         .buttonStyle(.borderless)
-        .font(.system(size: 12))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
+        .font(.system(size: 12, weight: .medium))
+        .labelStyle(.iconOnly)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("Toolbar.Markdown")
     }
 
-    private func formatButton(_ title: String, prefix: String, help: String) -> some View {
+    private var toolbarDivider: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor).opacity(0.7))
+            .frame(width: 1, height: 14)
+            .padding(.horizontal, 4)
+    }
+
+    private func headingButton(_ title: String, prefix: String) -> some View {
+        Button(title) {
+            appState.toggleMarkdownFormat(prefix: prefix)
+        }
+        .accessibilityIdentifier("Toolbar.\(prefix)")
+    }
+
+    private func formatButton(
+        systemImage: String,
+        prefix: String,
+        help: String,
+        identifier: String? = nil
+    ) -> some View {
         Button {
             appState.toggleMarkdownFormat(prefix: prefix)
         } label: {
-            Text(title)
-                .fontWeight(.semibold)
-                .frame(minWidth: 20, minHeight: 20)
+            Image(systemName: systemImage)
+                .frame(width: 26, height: 22)
+                .contentShape(.rect)
         }
         .help(help)
         .accessibilityLabel(help)
-        .accessibilityIdentifier("Toolbar.\(prefix)")
+        .accessibilityIdentifier(identifier ?? "Toolbar.\(prefix)")
     }
 }
 

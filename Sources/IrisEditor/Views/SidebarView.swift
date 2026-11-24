@@ -15,6 +15,7 @@ struct SidebarView: View {
     @Namespace private var panePill
     @State private var dragStartWidth: CGFloat?
     @State private var isResizeHandleHovered = false
+    @State private var pushedResizeCursor = false
     @State private var isVaultButtonHovered = false
     @State private var isNewNoteHovered = false
 
@@ -68,18 +69,7 @@ struct SidebarView: View {
         .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.38),
-                            Color(nsColor: .separatorColor).opacity(0.32),
-                            Color.white.opacity(0.06)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 0.8
-                )
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.7), lineWidth: 0.8)
                 .allowsHitTesting(false)
         }
         .overlay(alignment: .trailing) { resizeHandle }
@@ -399,11 +389,10 @@ struct SidebarView: View {
         }
         .onHover { hovering in
             isResizeHandleHovered = hovering
-            if hovering {
-                NSCursor.resizeLeftRight.push()
-            } else {
-                NSCursor.pop()
-            }
+            setResizeCursor(hovering)
+        }
+        .onDisappear {
+            setResizeCursor(false)
         }
         .animation(.easeOut(duration: 0.12), value: isResizeHandleHovered)
         .animation(.snappy(duration: 0.18), value: dragStartWidth == nil)
@@ -438,6 +427,19 @@ struct SidebarView: View {
             }
         }
     }
+
+    /// `NSCursor.push` / `pop` must stay balanced. Leaving the handle while it is
+    /// hovered (sidebar close, zen mode) used to pop an empty stack or leave the
+    /// resize cursor stuck on.
+    private func setResizeCursor(_ show: Bool) {
+        if show, !pushedResizeCursor {
+            NSCursor.resizeLeftRight.push()
+            pushedResizeCursor = true
+        } else if !show, pushedResizeCursor {
+            NSCursor.pop()
+            pushedResizeCursor = false
+        }
+    }
 }
 
 // MARK: - Glass
@@ -460,7 +462,7 @@ private struct SidebarGlassSurface: View {
 
             LinearGradient(
                 colors: [
-                    Color.white.opacity(0.10),
+                    Color.primary.opacity(0.06),
                     .clear,
                     Color.black.opacity(0.05)
                 ],

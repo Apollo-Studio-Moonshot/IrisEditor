@@ -5,6 +5,26 @@ struct WikiSuggestionBar: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            suggestionRow
+        }
+        .frame(maxWidth: 560)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.vertical, 5)
+        .background {
+            GlassBackdrop(style: .regular, cornerRadius: 10, interactive: true)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.16), radius: 14, y: 6)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(L10n.wikiSuggestions)
+        .accessibilityIdentifier("WikiSuggestionBar")
+    }
+
+    private var suggestionRow: some View {
         HStack(spacing: 4) {
             Image(systemName: "link")
                 .font(.system(size: 10, weight: .semibold))
@@ -51,17 +71,5 @@ struct WikiSuggestionBar: View {
                 .foregroundStyle(.tertiary)
                 .padding(.trailing, 9)
         }
-        .padding(.vertical, 5)
-        .background {
-            GlassBackdrop(style: .regular, cornerRadius: 10, interactive: true)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
-        }
-        .shadow(color: .black.opacity(0.16), radius: 14, y: 6)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(L10n.wikiSuggestions)
-        .accessibilityIdentifier("WikiSuggestionBar")
     }
 }

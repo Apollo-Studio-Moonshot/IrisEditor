@@ -4,7 +4,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// How the editor surface and the Markdown preview share the window.
-enum EditorViewMode: String, Equatable {
+enum EditorViewMode: String, CaseIterable, Equatable {
     case source
     case split
     case preview
@@ -18,9 +18,17 @@ enum EditorViewMode: String, Equatable {
         }
     }
 
+    var title: String {
+        switch self {
+        case .source: return L10n.viewSource
+        case .split: return L10n.viewSplit
+        case .preview: return L10n.viewPreview
+        }
+    }
+
     var toolbarIcon: String {
         switch self {
-        case .source: return "doc.richtext"
+        case .source: return "doc.plaintext"
         case .split: return "rectangle.split.2x1"
         case .preview: return "text.alignleft"
         }
@@ -688,7 +696,7 @@ final class AppState: ObservableObject {
     private func presentQuickSwitcher(for query: String) {
         quickSwitcherInitialQuery = query
         withAnimation(.snappy(duration: 0.2)) {
-            showCommandPalette = false
+            suppressOtherFloatingPanels(except: .quickSwitcher)
             showQuickSwitcher = true
         }
     }
@@ -1321,13 +1329,16 @@ final class AppState: ObservableObject {
     // MARK: - Command palette & outline
 
     func toggleCommandPalette() {
+        let opening = !showCommandPalette
         withAnimation(.snappy(duration: 0.2)) {
-            showCommandPalette.toggle()
-            if showCommandPalette {
-                showQuickSwitcher = false
+            if opening {
+                suppressOtherFloatingPanels(except: .commandPalette)
+                showCommandPalette = true
+            } else {
+                showCommandPalette = false
             }
         }
-        if !showCommandPalette {
+        if !opening {
             NotificationCenter.default.post(name: .focusEditor, object: nil)
         }
     }
@@ -1343,9 +1354,10 @@ final class AppState: ObservableObject {
     func toggleQuickSwitcher() {
         let opening = !showQuickSwitcher
         withAnimation(.snappy(duration: 0.2)) {
-            showQuickSwitcher.toggle()
-            if showQuickSwitcher {
-                showCommandPalette = false
+            if opening {
+                openQuickSwitcherLocked()
+            } else {
+                showQuickSwitcher = false
             }
         }
         if opening {
@@ -1355,6 +1367,14 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Shows the quick switcher and closes every other floating panel.
+    func openQuickSwitcher() {
+        withAnimation(.snappy(duration: 0.2)) {
+            openQuickSwitcherLocked()
+        }
+        quickSwitcherInitialQuery = ""
+    }
+
     func dismissQuickSwitcher() {
         guard showQuickSwitcher else { return }
         withAnimation(.snappy(duration: 0.18)) {
@@ -1362,6 +1382,39 @@ final class AppState: ObservableObject {
         }
         quickSwitcherInitialQuery = ""
         NotificationCenter.default.post(name: .focusEditor, object: nil)
+    }
+
+    /// One floating panel at a time. Opening a second one used to leave the first
+    /// panel on screen, so the command palette, quick switcher, vault search, and
+    /// version history could stack.
+    private enum FloatingPanel {
+        case commandPalette
+        case quickSwitcher
+        case vaultSearch
+        case versionHistory
+    }
+
+    private func openQuickSwitcherLocked() {
+        suppressOtherFloatingPanels(except: .quickSwitcher)
+        showQuickSwitcher = true
+    }
+
+    private func suppressOtherFloatingPanels(except panel: FloatingPanel) {
+        if panel != .commandPalette {
+            showCommandPalette = false
+        }
+        if panel != .quickSwitcher {
+            showQuickSwitcher = false
+            quickSwitcherInitialQuery = ""
+        }
+        if panel != .vaultSearch, showVaultSearch {
+            showVaultSearch = false
+            vaultSearchQuery = ""
+            vaultSearchResults = []
+        }
+        if panel != .versionHistory {
+            showVersionHistory = false
+        }
     }
 
     func consumeQuickSwitcherInitialQuery() -> String {
@@ -1969,13 +2022,16 @@ final class AppState: ObservableObject {
     // MARK: - Vault search
 
     func toggleVaultSearch() {
+        let opening = !showVaultSearch
         withAnimation(.snappy(duration: 0.2)) {
-            showVaultSearch.toggle()
+            if opening {
+                suppressOtherFloatingPanels(except: .vaultSearch)
+                showVaultSearch = true
+            } else {
+                showVaultSearch = false
+            }
         }
-        if showVaultSearch {
-            showCommandPalette = false
-            showQuickSwitcher = false
-        } else {
+        if !opening {
             vaultSearchQuery = ""
             vaultSearchResults = []
             NotificationCenter.default.post(name: .focusEditor, object: nil)
@@ -2046,6 +2102,7 @@ final class AppState: ObservableObject {
     func presentVersionHistory() {
         versionHistory = VersionHistoryStore.versions(for: currentVersionKey)
         withAnimation(.snappy(duration: 0.2)) {
+            suppressOtherFloatingPanels(except: .versionHistory)
             showVersionHistory = true
         }
     }
