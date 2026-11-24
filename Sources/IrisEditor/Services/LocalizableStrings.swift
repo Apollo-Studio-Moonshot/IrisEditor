@@ -122,6 +122,11 @@ enum L10n {
     static let newNoteMenu = NSLocalizedString("New Note…", comment: "Menu item creating a note")
     static let searchAllNotes = NSLocalizedString("Search All Notes…", comment: "Menu item opening vault search")
     static let dailyNote = NSLocalizedString("Daily Note", comment: "Menu item opening today's daily note")
+    static let insertOpenTasks = NSLocalizedString("Insert Open Tasks", comment: "Menu item inserting the live open-task block")
+    static let extractNote = NSLocalizedString("Extract Note…", comment: "Menu item extracting the selection into a new note")
+    static let openTasks = NSLocalizedString("Open tasks", comment: "Heading on the live open-task list in the preview")
+    static let noOpenTasks = NSLocalizedString("No open tasks in the rest of the vault.", comment: "Empty state inside the live open-task list")
+    static let linkedFrom = NSLocalizedString("Linked from", comment: "Heading on the gutter popover listing notes that link to this heading")
     static let sidebarMenu = NSLocalizedString("Sidebar", comment: "Submenu selecting the sidebar pane")
     static let resizeSidebar = NSLocalizedString("Resize Sidebar", comment: "Accessibility label for the sidebar width drag handle")
     static let insertTemplate = NSLocalizedString("Insert Template", comment: "Submenu inserting a vault template")
@@ -411,5 +416,15 @@ enum L10n {
 
     static func openNotePath(_ path: String) -> String {
         String(format: NSLocalizedString("Open %@", comment: "Accessibility label for a sidebar note row with its path"), path)
+    }
+
+    static func openTaskCount(_ count: Int) -> String {
+        count == 1
+            ? NSLocalizedString("1 open task", comment: "Count of open tasks shown in the live task list")
+            : String(format: NSLocalizedString("%d open tasks", comment: "Count of open tasks shown in the live task list"), count)
+    }
+
+    static func completeTask(_ text: String) -> String {
+        String(format: NSLocalizedString("Complete %@", comment: "Accessibility label for checking off a vault task"), text)
     }
 }

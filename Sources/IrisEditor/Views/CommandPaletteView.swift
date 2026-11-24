@@ -91,6 +91,15 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "Insert Table", icon: "tablecells", shortcut: nil) {
                 appState.insertSnippet(ContentView.tableTemplate)
             },
+            PaletteCommand(title: "Extract Note…", icon: "arrow.up.doc", shortcut: "⌥⌘X") {
+                appState.extractSelection()
+            },
+            PaletteCommand(title: "Insert Open Tasks", icon: "checklist", shortcut: nil) {
+                appState.insertOpenTasks()
+            },
+            PaletteCommand(title: "Daily Note", icon: "calendar", shortcut: "⇧⌘D") {
+                appState.openDailyNote()
+            },
             PaletteCommand(title: "Zoom In", icon: "plus.magnifyingglass", shortcut: "⌘=") {
                 appState.zoomIn()
             },

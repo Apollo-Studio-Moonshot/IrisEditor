@@ -124,6 +124,22 @@ private struct TransclusionDepthKey: EnvironmentKey {
     static let defaultValue: Int = 0
 }
 
+private struct OpenVaultTasksKey: EnvironmentKey {
+    static let defaultValue: [VaultTask] = []
+}
+
+private struct VaultTaskHostPathKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
+private struct CompleteVaultTaskKey: EnvironmentKey {
+    static let defaultValue: (@MainActor (VaultTask) -> Void)? = nil
+}
+
+private struct OpenVaultTaskKey: EnvironmentKey {
+    static let defaultValue: (@MainActor (VaultTask) -> Void)? = nil
+}
+
 extension EnvironmentValues {
     fileprivate var previewTheme: PreviewTheme {
         get { self[PreviewThemeKey.self] }
@@ -149,6 +165,107 @@ extension EnvironmentValues {
         get { self[TransclusionDepthKey.self] }
         set { self[TransclusionDepthKey.self] = newValue }
     }
+
+    var openVaultTasks: [VaultTask] {
+        get { self[OpenVaultTasksKey.self] }
+        set { self[OpenVaultTasksKey.self] = newValue }
+    }
+
+    var vaultTaskHostPath: String? {
+        get { self[VaultTaskHostPathKey.self] }
+        set { self[VaultTaskHostPathKey.self] = newValue }
+    }
+
+    var completeVaultTask: (@MainActor (VaultTask) -> Void)? {
+        get { self[CompleteVaultTaskKey.self] }
+        set { self[CompleteVaultTaskKey.self] = newValue }
+    }
+
+    var openVaultTask: (@MainActor (VaultTask) -> Void)? {
+        get { self[OpenVaultTaskKey.self] }
+        set { self[OpenVaultTaskKey.self] = newValue }
+    }
+}
+
+/// Live list standing in for a ```iris-tasks fence.
+private struct OpenTasksLens: View {
+    let tasks: [VaultTask]
+    let theme: PreviewTheme
+    var onComplete: (@MainActor (VaultTask) -> Void)?
+    var onOpen: (@MainActor (VaultTask) -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text(L10n.openTasks)
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer(minLength: 8)
+                Text(L10n.openTaskCount(tasks.count))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            if tasks.isEmpty {
+                Text(L10n.noOpenTasks)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(tasks) { task in
+                        taskRow(task)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.surface.opacity(0.55))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(theme.border.opacity(0.6), lineWidth: 0.5)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("Preview.OpenTasks")
+    }
+
+    private func taskRow(_ task: VaultTask) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Button {
+                onComplete?(task)
+            } label: {
+                Image(systemName: "square")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L10n.completeTask(task.text))
+            .accessibilityIdentifier("Preview.OpenTask.\(task.line)")
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(task.text)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    onOpen?(task)
+                } label: {
+                    Text(task.sourceTitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L10n.openNotePath(task.sourceTitle))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 private struct MarkdownBlockView: View {
@@ -159,6 +276,10 @@ private struct MarkdownBlockView: View {
     @Environment(\.previewTheme) private var theme
     @Environment(\.togglePreviewTask) private var onToggleTask
     @Environment(\.footnoteNumbers) private var footnoteNumbers
+    @Environment(\.openVaultTasks) private var openVaultTasks
+    @Environment(\.vaultTaskHostPath) private var vaultTaskHostPath
+    @Environment(\.completeVaultTask) private var completeVaultTask
+    @Environment(\.openVaultTask) private var openVaultTask
 
     var body: some View {
         switch block {
@@ -194,7 +315,14 @@ private struct MarkdownBlockView: View {
             }
 
         case .codeBlock(let language, let lines):
-            if language?.lowercased() == "mermaid" {
+            if language?.lowercased() == VaultTaskIndex.fenceLanguage {
+                OpenTasksLens(
+                    tasks: visibleOpenTasks,
+                    theme: theme,
+                    onComplete: completeVaultTask,
+                    onOpen: openVaultTask
+                )
+            } else if language?.lowercased() == "mermaid" {
                 MermaidBlockView(source: lines.joined(separator: "\n"))
             } else {
                 codeSurface(lines: lines, label: language)
@@ -380,6 +508,18 @@ private struct MarkdownBlockView: View {
                 }
             }
         }
+    }
+
+    /// Open tasks from other notes. The host note's own checkboxes already render inline.
+    private var visibleOpenTasks: [VaultTask] {
+        let filtered = openVaultTasks.filter { task in
+            guard let vaultTaskHostPath else { return true }
+            return task.sourceURL.standardizedFileURL.path != vaultTaskHostPath
+        }
+        if filtered.count > 200 {
+            return Array(filtered.prefix(200))
+        }
+        return filtered
     }
 
     private struct TaskInfo {

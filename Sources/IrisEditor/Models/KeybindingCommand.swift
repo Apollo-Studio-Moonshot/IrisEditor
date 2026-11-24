@@ -34,6 +34,7 @@ enum KeybindingCommand: String, CaseIterable, Identifiable {
     case newNote
     case vaultSearch
     case dailyNote
+    case extractNote
     case toggleStar
 
     var id: String { rawValue }
@@ -69,6 +70,7 @@ enum KeybindingCommand: String, CaseIterable, Identifiable {
         case .newNote: return "New Note…"
         case .vaultSearch: return "Search All Notes…"
         case .dailyNote: return "Daily Note"
+        case .extractNote: return "Extract Note…"
         case .toggleStar: return "Star Note"
         }
     }
@@ -105,6 +107,7 @@ enum KeybindingCommand: String, CaseIterable, Identifiable {
         case .newNote: return "command+shift+n"
         case .vaultSearch: return "command+shift+f"
         case .dailyNote: return "command+shift+d"
+        case .extractNote: return "command+option+x"
         case .toggleStar: return "command+shift+s"
         }
     }

@@ -150,6 +150,10 @@ final class AppState: ObservableObject {
     @Published private(set) var vaultBacklinks: [VaultBacklink] = []
     /// Plain-text mentions of the current note that are not wiki links yet.
     @Published private(set) var vaultUnlinkedMentions: [VaultBacklink] = []
+    /// Unchecked tasks across the vault, including unsaved text in open tabs.
+    @Published private(set) var vaultOpenTasks: [VaultTask] = []
+    /// Heading-targeted wiki links, used to mark the editor gutter.
+    @Published private(set) var headingLinkCache: [VaultHeadingReference] = []
     @Published private(set) var vaultTemplates: [URL] = []
 
     @Published var showVaultSearch = false
@@ -1550,17 +1554,21 @@ final class AppState: ObservableObject {
             vaultFiles = []
             vaultTags = []
             vaultBacklinks = []
+            vaultOpenTasks = []
+            headingLinkCache = []
             return
         }
 
         lastVaultRoot = root.standardizedFileURL
         let capturedRoot = root
         let currentURL = document.fileURL
+        let overrides = openTextOverrides()
 
         vaultRefreshTask?.cancel()
         vaultRefreshTask = Task.detached(priority: .utility) { [weak self] in
             let files = VaultScanner.markdownFiles(in: capturedRoot)
             let tags = VaultScanner.tags(in: files)
+            let derived = VaultDerivedIndex.build(files: files, overrides: overrides)
             guard !Task.isCancelled else { return }
 
             await MainActor.run { [weak self] in
@@ -1573,10 +1581,36 @@ final class AppState: ObservableObject {
                 self.vaultBacklinks = currentURL.map {
                     VaultScanner.backlinks(to: $0, in: files)
                 } ?? []
+                self.vaultOpenTasks = derived.openTasks
+                self.headingLinkCache = derived.headingReferences
                 self.refreshTemplates()
                 SpotlightIndexer.index(files: files)
             }
         }
+    }
+
+    /// Gutter marks for headings in `document` that other notes link to.
+    func headingMarks(in document: EditorDocument) -> [Int: [VaultBacklink]] {
+        guard let url = document.fileURL else { return [:] }
+        return HeadingBacklinkIndex.marks(
+            in: document.text,
+            documentURL: url,
+            references: headingLinkCache
+        )
+    }
+
+    /// Unsaved buffers, keyed by standardized path, so a vault scan sees open editors.
+    private func openTextOverrides() -> [String: String] {
+        var overrides: [String: String] = [:]
+        for tab in tabs {
+            if let path = tab.fileURL?.standardizedFileURL.path {
+                overrides[path] = tab.text
+            }
+        }
+        if let side = secondDocument, let path = side.fileURL?.standardizedFileURL.path {
+            overrides[path] = side.text
+        }
+        return overrides
     }
 
     /// Throttled refresh used by sidebar panes and file operations.
@@ -1939,6 +1973,141 @@ final class AppState: ObservableObject {
     func applyTemplate(_ url: URL) {
         guard let contents = try? String(contentsOf: url, encoding: .utf8) else { return }
         insertSnippet(contents)
+    }
+
+    /// Inserts the live open-task fence. The preview replaces it with every unchecked
+    /// task in the vault, and checking one writes back to the note that owns it.
+    func insertOpenTasks() {
+        let selection = currentTextView?.selectedRange() ?? currentSelection
+        let ns = document.text as NSString
+        let location = min(max(0, selection.location), ns.length)
+        let atLineStart = location == 0 || ns.character(at: location - 1) == 10
+        let atLineEnd = location == ns.length || ns.character(at: location) == 10
+        var snippet = VaultTaskIndex.fenceBlock
+        if !atLineStart { snippet = "\n\n" + snippet }
+        if !atLineEnd { snippet += "\n\n" }
+        else { snippet += "\n" }
+        applyPluginEdit(range: NSRange(location: location, length: 0), replacement: snippet)
+    }
+
+    /// Checks off a task in the note that contains it.
+    ///
+    /// Open editors are updated in place so unsaved text is not overwritten from disk.
+    /// A note that is not on screen is written immediately.
+    func completeVaultTask(_ task: VaultTask) {
+        let path = task.sourceURL.standardizedFileURL.path
+        let openDocument = tabs.first { $0.fileURL?.standardizedFileURL.path == path }
+            ?? (secondDocument?.fileURL?.standardizedFileURL.path == path ? secondDocument : nil)
+
+        let source: String
+        if let openDocument {
+            source = openDocument.text
+        } else {
+            guard let disk = try? String(contentsOf: task.sourceURL, encoding: .utf8) else {
+                presentInfo(
+                    "Couldn’t update the task",
+                    message: "The note that contains “\(task.text)” could not be read."
+                )
+                return
+            }
+            source = disk
+        }
+
+        guard let updated = VaultTaskIndex.settingChecked(
+            true,
+            taskText: task.text,
+            preferredLine: task.line,
+            in: source
+        ) else {
+            presentInfo(
+                "Couldn’t update the task",
+                message: "“\(task.text)” is no longer on that line."
+            )
+            refreshVaultIfNeeded()
+            return
+        }
+
+        if let openDocument {
+            openDocument.text = updated
+            openDocument.isDirty = true
+            _ = save(openDocument, to: task.sourceURL)
+        } else {
+            do {
+                try updated.write(to: task.sourceURL, atomically: true, encoding: .utf8)
+                VersionHistoryStore.record(text: updated, fileURL: task.sourceURL)
+                refreshVaultIfNeeded()
+            } catch {
+                presentError("Couldn’t update the task.", error: error)
+                return
+            }
+        }
+
+        vaultOpenTasks.removeAll { $0.id == task.id }
+    }
+
+    /// Lifts the selection, or the paragraph around the caret, into a new note and
+    /// leaves `![[Note]]` in its place.
+    func extractSelection() {
+        guard document.fileURL != nil || effectiveVaultRoot != nil else {
+            presentInfo(
+                "No vault folder",
+                message: "Save this document or choose a vault folder before extracting a note."
+            )
+            return
+        }
+
+        let source = document.text
+        let selection = currentTextView?.selectedRange() ?? currentSelection
+        let range = NoteExtraction.paragraphRange(in: source, selection: selection)
+        guard range.length > 0 else {
+            presentInfo(
+                "Nothing to extract",
+                message: "Place the caret in a paragraph or select the text to extract."
+            )
+            return
+        }
+
+        let excerpt = (source as NSString).substring(with: range)
+        let suggested = NoteExtraction.suggestedTitle(from: excerpt)
+        guard let name = promptForName(
+            title: "Extract Note",
+            placeholder: "Note name",
+            initial: suggested
+        ) else { return }
+
+        let title = NoteExtraction.fileName(from: name)
+        guard let folder = document.fileURL?.deletingLastPathComponent() ?? effectiveVaultRoot else {
+            return
+        }
+        let url = uniqueMarkdownURL(named: title, in: folder)
+        let noteTitle = url.deletingPathExtension().lastPathComponent
+        let body = NoteExtraction.noteBody(title: noteTitle, excerpt: excerpt)
+
+        do {
+            try body.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            presentError("Couldn’t create the note.", error: error)
+            return
+        }
+
+        applyPluginEdit(range: range, replacement: NoteExtraction.embed(named: noteTitle))
+        refreshVault()
+    }
+
+    /// A `.md` URL in `folder` whose name does not collide with a file already there.
+    private func uniqueMarkdownURL(named title: String, in folder: URL) -> URL {
+        let base = NoteExtraction.fileName(from: title)
+        var candidate = folder
+            .appendingPathComponent(base)
+            .appendingPathExtension(MarkdownFileType.defaultExtension)
+        var counter = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = folder
+                .appendingPathComponent("\(base) \(counter)")
+                .appendingPathExtension(MarkdownFileType.defaultExtension)
+            counter += 1
+        }
+        return candidate
     }
 
     /// Creates a note next to the current file (or at the vault root) and opens it.

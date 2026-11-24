@@ -232,6 +232,11 @@ struct IrisEditorApp: App {
                     appState.insertSnippet(ContentView.tableTemplate)
                 }
 
+                Button(L10n.extractNote) {
+                    appState.extractSelection()
+                }
+                .irisKeyboardShortcut(appState.keyboardShortcut(for: .extractNote))
+
                 Divider()
 
                 Button(L10n.togglePreview) {
@@ -327,6 +332,10 @@ struct IrisEditorApp: App {
                     appState.openDailyNote()
                 }
                 .irisKeyboardShortcut(appState.keyboardShortcut(for: .dailyNote))
+
+                Button(L10n.insertOpenTasks) {
+                    appState.insertOpenTasks()
+                }
 
                 Divider()
 

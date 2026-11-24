@@ -379,26 +379,14 @@ struct ContentView: View {
         case .source:
             sourcePane(for: appState.document)
         case .preview:
-            MarkdownPreviewView(
-                markdown: appState.document.text,
-                baseURL: previewBaseURL(for: appState.document),
-                theme: appState.settings.previewTheme,
-                onToggleTask: { text in appState.toggleTask(text: text) }
-            )
-            .environment(\.transclusionResolver, transclusionResolver)
-            .clipShape(.rect(cornerRadius: 13))
+            preview(for: appState.document)
+                .clipShape(.rect(cornerRadius: 13))
         case .split:
             HSplitView {
                 sourcePane(for: appState.document)
                     .frame(minWidth: 280)
-                MarkdownPreviewView(
-                    markdown: appState.document.text,
-                    baseURL: previewBaseURL(for: appState.document),
-                    theme: appState.settings.previewTheme,
-                    onToggleTask: { text in appState.toggleTask(text: text) }
-                )
-                .environment(\.transclusionResolver, transclusionResolver)
-                .frame(minWidth: 280)
+                preview(for: appState.document)
+                    .frame(minWidth: 280)
             }
             .clipShape(.rect(cornerRadius: 13))
         }
@@ -446,6 +434,25 @@ struct ContentView: View {
         }
     }
 
+    private func preview(for document: EditorDocument) -> some View {
+        MarkdownPreviewView(
+            markdown: document.text,
+            baseURL: previewBaseURL(for: document),
+            theme: appState.settings.previewTheme,
+            onToggleTask: { text in appState.toggleTask(text: text) }
+        )
+        .environment(\.transclusionResolver, transclusionResolver)
+        .environment(\.openVaultTasks, appState.vaultOpenTasks)
+        .environment(\.vaultTaskHostPath, document.fileURL?.standardizedFileURL.path)
+        .environment(\.completeVaultTask) { task in
+            appState.completeVaultTask(task)
+        }
+        .environment(\.openVaultTask) { task in
+            appState.open(url: task.sourceURL)
+            appState.reveal(line: task.line)
+        }
+    }
+
     private func sourcePane(for document: EditorDocument) -> some View {
         TextEditorViewRepresentable(
             text: Binding(
@@ -458,7 +465,12 @@ struct ContentView: View {
             ),
             settings: appState.settings,
             documentID: document.id,
-            fileURL: document.fileURL
+            fileURL: document.fileURL,
+            headingMarks: appState.headingMarks(in: document),
+            onOpenHeadingSource: { link in
+                appState.open(url: link.sourceURL)
+                appState.reveal(line: link.line)
+            }
         )
         .padding(1)
         .clipShape(.rect(cornerRadius: 13))

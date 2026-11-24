@@ -870,7 +870,18 @@ enum DailyNotes {
     static func defaultTemplate(date: Date, formatter: DateFormatter? = nil) -> String {
         let formatted = formatter.map { $0.string(from: date) }
             ?? makeFormatter(format: "yyyy-MM-dd").string(from: date)
-        return "# \(formatted)\n\n## Tasks\n\n- [ ] "
+        return """
+        # \(formatted)
+
+        ## Today
+
+        - [ ] 
+
+        ## Open tasks
+
+        \(VaultTaskIndex.fenceBlock)
+
+        """
     }
 
     private static func makeFormatter(format: String) -> DateFormatter {

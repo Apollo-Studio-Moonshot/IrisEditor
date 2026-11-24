@@ -6,6 +6,8 @@ struct TextEditorViewRepresentable: NSViewRepresentable {
     let settings: EditorSettings
     let documentID: UUID
     var fileURL: URL? = nil
+    var headingMarks: [Int: [VaultBacklink]] = [:]
+    var onOpenHeadingSource: ((VaultBacklink) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, documentID: documentID)
@@ -30,6 +32,8 @@ struct TextEditorViewRepresentable: NSViewRepresentable {
         )
 
         let ruler = LineNumberRulerView(textView: textView, scrollView: scrollView)
+        ruler.headingMarks = headingMarks
+        ruler.onOpenHeadingSource = onOpenHeadingSource
         scrollView.verticalRulerView = ruler
         scrollView.hasVerticalRuler = true
         scrollView.rulersVisible = settings.showLineNumbers
@@ -107,7 +111,13 @@ struct TextEditorViewRepresentable: NSViewRepresentable {
         textView.documentURL = fileURL
         applyLayoutMode(settings.wordWrap, textView: textView, scrollView: nsView, coordinator: context.coordinator)
         nsView.rulersVisible = settings.showLineNumbers
-        (nsView.verticalRulerView as? LineNumberRulerView)?.updateFont(settings.lineNumberFont)
+        if let ruler = nsView.verticalRulerView as? LineNumberRulerView {
+            ruler.updateFont(settings.lineNumberFont)
+            if ruler.headingMarks != headingMarks {
+                ruler.headingMarks = headingMarks
+            }
+            ruler.onOpenHeadingSource = onOpenHeadingSource
+        }
     }
 
     private func applyLayoutMode(
@@ -2111,6 +2121,17 @@ final class IrisTextView: NSTextView {
 final class LineNumberRulerView: NSRulerView {
     private weak var textView: IrisTextView?
     private var numberFont: NSFont
+    /// Heading lines that other notes link to, and the notes that link them.
+    var headingMarks: [Int: [VaultBacklink]] = [:] {
+        didSet { needsDisplay = true }
+    }
+    var onOpenHeadingSource: ((VaultBacklink) -> Void)?
+    private var markHitRects: [Int: NSRect] = [:]
+    private var popover: NSPopover?
+    private var popoverController: HeadingMarkMenuController?
+    private var popoverLine: Int?
+    private var closeGeneration = 0
+    private let markColumnWidth: CGFloat = 16
 
     init(textView: IrisTextView, scrollView: NSScrollView) {
         self.textView = textView
@@ -2118,7 +2139,7 @@ final class LineNumberRulerView: NSRulerView {
         super.init(scrollView: scrollView, orientation: .verticalRuler)
 
         clientView = textView
-        ruleThickness = 52
+        ruleThickness = 68
 
         NotificationCenter.default.addObserver(
             self,
@@ -2137,7 +2158,102 @@ final class LineNumberRulerView: NSRulerView {
     }
 
     override var isFlipped: Bool { true }
-    override var requiredThickness: CGFloat { 52 }
+    override var requiredThickness: CGFloat { 68 }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas {
+            removeTrackingArea(area)
+        }
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+        )
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let line = markLine(at: point), let sources = headingMarks[line], !sources.isEmpty else {
+            schedulePopoverClose()
+            return
+        }
+        cancelPopoverClose()
+        showPopover(for: line, sources: sources)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        schedulePopoverClose()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let line = markLine(at: point), let sources = headingMarks[line], !sources.isEmpty else {
+            super.mouseDown(with: event)
+            return
+        }
+        if sources.count == 1, let only = sources.first {
+            popover?.performClose(nil)
+            onOpenHeadingSource?(only)
+            return
+        }
+        cancelPopoverClose()
+        showPopover(for: line, sources: sources)
+    }
+
+    private func markLine(at point: NSPoint) -> Int? {
+        for (line, rect) in markHitRects where rect.contains(point) {
+            return line
+        }
+        return nil
+    }
+
+    private func showPopover(for line: Int, sources: [VaultBacklink]) {
+        guard let rect = markHitRects[line] else { return }
+        let controller = popoverController ?? HeadingMarkMenuController()
+        popoverController = controller
+        controller.onSelect = { [weak self] link in
+            self?.popover?.performClose(nil)
+            self?.onOpenHeadingSource?(link)
+        }
+        controller.show(sources: sources)
+
+        let popover = self.popover ?? NSPopover()
+        popover.contentViewController = controller
+        popover.behavior = .semitransient
+        popover.animates = false
+        self.popover = popover
+        if popover.isShown, popoverLine == line {
+            popover.contentSize = controller.preferredContentSize
+            return
+        }
+        popoverLine = line
+        if popover.isShown {
+            popover.performClose(nil)
+        }
+        popover.show(relativeTo: rect, of: self, preferredEdge: .maxX)
+    }
+
+    private func schedulePopoverClose() {
+        closeGeneration += 1
+        let generation = closeGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self, self.closeGeneration == generation else { return }
+            if let frame = self.popover?.contentViewController?.view.window?.frame,
+               frame.contains(NSEvent.mouseLocation) {
+                self.schedulePopoverClose()
+                return
+            }
+            self.popover?.performClose(nil)
+        }
+    }
+
+    private func cancelPopoverClose() {
+        closeGeneration += 1
+    }
 
     func updateFont(_ font: NSFont) {
         numberFont = font
@@ -2149,6 +2265,7 @@ final class LineNumberRulerView: NSRulerView {
     }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
+        markHitRects.removeAll()
         NSColor.labelColor.withAlphaComponent(0.025).setFill()
         bounds.fill()
 
@@ -2182,7 +2299,8 @@ final class LineNumberRulerView: NSRulerView {
         let currentLine = lineIndex.lineNumber(
             atUTF16Index: textView.selectedRange().location
         )
-        let drawRectWidth = max(0, bounds.width - 10)
+        let numberX = markColumnWidth
+        let drawRectWidth = max(0, bounds.width - numberX - 8)
 
         let textLength = (textView.string as NSString).length
         if textLength == 0 {
@@ -2193,7 +2311,7 @@ final class LineNumberRulerView: NSRulerView {
             let number = "1" as NSString
             let size = number.size(withAttributes: attributes)
             number.draw(
-                in: NSRect(x: 0, y: point.y, width: drawRectWidth, height: size.height),
+                in: NSRect(x: numberX, y: point.y, width: drawRectWidth, height: size.height),
                 withAttributes: attributes
             )
             return
@@ -2229,9 +2347,88 @@ final class LineNumberRulerView: NSRulerView {
             let y = point.y + (lineRect.height - size.height) / 2
 
             number.draw(
-                in: NSRect(x: 0, y: y, width: drawRectWidth, height: size.height),
+                in: NSRect(x: numberX, y: y, width: drawRectWidth, height: size.height),
                 withAttributes: textAttributes
             )
+
+            guard let sources = self.headingMarks[line], !sources.isEmpty else { return }
+            let markSize: CGFloat = 7
+            let markRect = NSRect(
+                x: 4,
+                y: point.y + (lineRect.height - markSize) / 2,
+                width: markSize,
+                height: markSize
+            )
+            NSColor.controlAccentColor.setFill()
+            NSBezierPath(ovalIn: markRect).fill()
+            self.markHitRects[line] = NSRect(
+                x: 0,
+                y: point.y,
+                width: self.markColumnWidth,
+                height: max(lineRect.height, 14)
+            )
         }
+    }
+}
+
+/// Popover listing the notes that link to one heading.
+final class HeadingMarkMenuController: NSViewController {
+    var onSelect: ((VaultBacklink) -> Void)?
+    private let stack = NSStackView()
+    private var sources: [VaultBacklink] = []
+
+    override func loadView() {
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView()
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            container.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
+            container.widthAnchor.constraint(lessThanOrEqualToConstant: 280)
+        ])
+        view = container
+    }
+
+    func show(sources: [VaultBacklink]) {
+        self.sources = sources
+        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        let title = NSTextField(labelWithString: L10n.linkedFrom)
+        title.font = .systemFont(ofSize: 11, weight: .semibold)
+        title.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(title)
+
+        for (index, source) in sources.enumerated() {
+            let button = NSButton(
+                title: "\(source.sourceTitle)  ·  \(source.line)",
+                target: self,
+                action: #selector(openSource(_:))
+            )
+            button.tag = index
+            button.bezelStyle = .inline
+            button.isBordered = false
+            button.font = .systemFont(ofSize: 12)
+            button.alignment = .left
+            button.lineBreakMode = .byTruncatingTail
+            button.toolTip = source.excerpt
+            button.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            stack.addArrangedSubview(button)
+        }
+
+        view.layoutSubtreeIfNeeded()
+        preferredContentSize = stack.fittingSize
+    }
+
+    @objc private func openSource(_ sender: NSButton) {
+        guard sources.indices.contains(sender.tag) else { return }
+        onSelect?(sources[sender.tag])
     }
 }
