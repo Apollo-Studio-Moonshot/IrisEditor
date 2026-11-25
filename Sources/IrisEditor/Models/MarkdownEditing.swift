@@ -82,7 +82,15 @@ enum MarkdownEditing {
                 cursor += 1
             }
             guard let number = Int(digits) else { return nil }
-            continuation = "\(number + 1)\(delimiter) "
+            if isTaskListMarker(in: ns, at: cursor) {
+                cursor += 3 // "[ ]" / "[x]"
+                while cursor < ns.length, isSpaceOrTab(ns.character(at: cursor)) {
+                    cursor += 1
+                }
+                continuation = "\(number + 1)\(delimiter) [ ] "
+            } else {
+                continuation = "\(number + 1)\(delimiter) "
+            }
         } else {
             return nil
         }

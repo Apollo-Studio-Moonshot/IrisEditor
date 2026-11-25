@@ -65,8 +65,11 @@ enum TransclusionSlicer {
 
         var start: Int?
         var level: Int?
+        var fence: Character?
 
         for (index, line) in lines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if consumeFence(trimmed, fence: &fence) { continue }
             guard let found = headingLevel(of: line) else { continue }
             if start == nil {
                 guard normalized(line.dropFirst(found + 1)) == normalized(Substring(heading)) else {
@@ -90,9 +93,11 @@ enum TransclusionSlicer {
             .replacingOccurrences(of: "\r\n", with: "\n")
             .components(separatedBy: "\n")
         let marker = "^\(id)"
+        var fence: Character?
 
         for (index, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if consumeFence(trimmed, fence: &fence) { continue }
             guard trimmed.hasSuffix(marker) else { continue }
 
             // Walk back to the start of the paragraph and forward to its end.
@@ -111,6 +116,27 @@ enum TransclusionSlicer {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return nil
+    }
+
+    /// Returns true when `trimmed` opens, closes, or sits inside a fence.
+    ///
+    /// A fence closes only on the same marker, matching the outline and vault scans.
+    private static func consumeFence(_ trimmed: String, fence: inout Character?) -> Bool {
+        if let marker = fence {
+            if trimmed.hasPrefix(String(repeating: String(marker), count: 3)) {
+                fence = nil
+            }
+            return true
+        }
+        if trimmed.hasPrefix("```") {
+            fence = "`"
+            return true
+        }
+        if trimmed.hasPrefix("~~~") {
+            fence = "~"
+            return true
+        }
+        return false
     }
 
     private static func headingLevel(of line: String) -> Int? {

@@ -34,6 +34,32 @@ struct CompositionFeaturesTests {
         #expect(tasks.map(\.line) == [1, 2, 9])
     }
 
+    @Test func tasksIncludeOrderedCheckboxes() {
+        let text = """
+        1. [ ] Buy milk
+        2. [x] Walk
+        3) [ ] Starred
+
+        ```
+        1. [ ] Not a task
+        ```
+        """
+        let tasks = VaultTaskIndex.tasks(in: text)
+        #expect(tasks.map(\.text) == ["Buy milk", "Walk", "Starred"])
+        #expect(tasks.map(\.checked) == [false, true, false])
+        #expect(tasks.map(\.line) == [1, 2, 3])
+    }
+
+    @Test func settingCheckedUpdatesAnOrderedCheckbox() {
+        let updated = VaultTaskIndex.settingChecked(
+            true,
+            taskText: "Buy milk",
+            preferredLine: 1,
+            in: "1. [ ] Buy milk"
+        )
+        #expect(updated == "1. [x] Buy milk")
+    }
+
     @Test func settingCheckedPrefersTheNamedLine() {
         let text = """
         - [ ] Same
