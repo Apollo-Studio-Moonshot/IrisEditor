@@ -155,7 +155,7 @@ enum VaultTaskIndex {
     }
 
     private static let taskExpression = try? NSRegularExpression(
-        pattern: #"^([ \t]*[-*+][ \t]+\[)([ xX])(\][ \t]+)(.*)$"#
+        pattern: #"^([ \t]*(?:[-*+]|[0-9]+[.)])[ \t]+\[)([ xX])(\][ \t]+)(.*)$"#
     )
 }
 

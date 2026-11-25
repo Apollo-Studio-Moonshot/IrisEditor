@@ -303,8 +303,14 @@ final class AppState: ObservableObject {
         guard !restoredTabs.isEmpty || !recovered.isEmpty else { return }
 
         tabs = restoredTabs + recovered
-        if let session = restoredSession, !restoredTabs.isEmpty {
-            currentTabIndex = min(max(0, session.activeIndex), restoredTabs.count - 1)
+        if let session = restoredSession {
+            let selected = SessionTabRestore.restoredSelection(
+                restoredFileCount: restoredTabs.count,
+                recoveredDraftIDs: recovered.compactMap(\.draftID),
+                activeFileIndex: session.activeIndex,
+                activeDraftID: session.activeDraftID
+            )
+            currentTabIndex = min(max(0, selected), tabs.count - 1)
             viewMode = EditorViewMode(rawValue: session.viewMode) ?? .source
             showOutline = session.sidebarVisible
             sidebarTab = VaultPane(rawValue: session.sidebarPane) ?? .files
@@ -1527,15 +1533,28 @@ final class AppState: ObservableObject {
 
     func openInSecondPane(url: URL? = nil) {
         let targetURL = url ?? document.fileURL
-        let side = EditorDocument()
-        if let targetURL, let contents = Self.readText(at: targetURL) {
-            side.text = contents
-            side.fileURL = targetURL
-            side.isDirty = false
-        } else {
-            side.text = document.text
-            side.isDirty = true
+        var openDocuments = tabs.map {
+            SidePaneContents.OpenBuffer(url: $0.fileURL, text: $0.text, isDirty: $0.isDirty)
         }
+        if let secondDocument {
+            openDocuments.append(
+                SidePaneContents.OpenBuffer(
+                    url: secondDocument.fileURL,
+                    text: secondDocument.text,
+                    isDirty: secondDocument.isDirty
+                )
+            )
+        }
+        let seed = SidePaneContents.load(
+            targetURL: targetURL,
+            openDocuments: openDocuments,
+            fallbackText: document.text,
+            read: Self.readText(at:)
+        )
+        let side = EditorDocument()
+        side.text = seed.text
+        side.fileURL = seed.fileURL
+        side.isDirty = seed.isDirty
         withAnimation(.snappy(duration: 0.26)) {
             secondDocument = side
         }
@@ -2301,13 +2320,19 @@ final class AppState: ObservableObject {
     // MARK: - Session
 
     func saveSession() {
+        let paths = tabs.map { $0.fileURL?.path }
+        let active = tabs.indices.contains(currentTabIndex) ? tabs[currentTabIndex] : nil
         let session = EditorSession(
-            openFiles: tabs.compactMap { $0.fileURL?.path },
-            activeIndex: currentTabIndex,
+            openFiles: paths.compactMap { $0 },
+            activeIndex: SessionTabRestore.fileIndex(
+                tabFilePaths: paths,
+                activeTabIndex: currentTabIndex
+            ),
             viewMode: viewMode.rawValue,
             sidebarVisible: showOutline,
             sidebarPane: sidebarTab.rawValue,
-            vaultRoot: vaultRootURL?.path
+            vaultRoot: vaultRootURL?.path,
+            activeDraftID: active?.fileURL == nil ? active?.draftID : nil
         )
         SessionStore.save(session)
     }

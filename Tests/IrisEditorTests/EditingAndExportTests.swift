@@ -45,6 +45,14 @@ struct MarkdownEditingTests {
             MarkdownEditing.returnAction(forLine: "- [x] done", caretOffset: 10)
                 == .continueLine(prefix: "- [ ] ")
         )
+        #expect(
+            MarkdownEditing.returnAction(forLine: "1. [x] Buy milk", caretOffset: 15)
+                == .continueLine(prefix: "2. [ ] ")
+        )
+        #expect(
+            MarkdownEditing.returnAction(forLine: "  3) [x] item", caretOffset: 13)
+                == .continueLine(prefix: "  4) [ ] ")
+        )
     }
 
     @Test func endsEmptyContainersWithoutAddingABlankLine() {
@@ -63,6 +71,10 @@ struct MarkdownEditingTests {
         #expect(
             MarkdownEditing.returnAction(forLine: "- [ ]", caretOffset: 5)
                 == .endContainer(clearRange: NSRange(location: 0, length: 5), indentation: "")
+        )
+        #expect(
+            MarkdownEditing.returnAction(forLine: "1. [ ]", caretOffset: 6)
+                == .endContainer(clearRange: NSRange(location: 0, length: 6), indentation: "")
         )
     }
 

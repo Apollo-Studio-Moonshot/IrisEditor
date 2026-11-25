@@ -153,6 +153,41 @@ struct TransclusionAndMentionsTests {
         #expect(TransclusionSlicer.section(from: "## A\nx", heading: "B") == nil)
     }
 
+    @Test func sectionSlicingIgnoresHeadingsInsideFences() {
+        let markdown = """
+        ## Risks
+
+        Real risk.
+
+        ```
+        ## Next
+        ~~~
+        # Risks
+        ```
+
+        Still the risks section.
+        """
+        let section = TransclusionSlicer.section(from: markdown, heading: "Risks")
+        #expect(section?.contains("Real risk.") == true)
+        #expect(section?.contains("Still the risks section.") == true)
+    }
+
+    @Test func sectionDoesNotStartOnAFencedHeading() {
+        let markdown = """
+        ```
+        ## Risks
+        not really
+        ```
+
+        ## Risks
+
+        Actual.
+        """
+        let section = TransclusionSlicer.section(from: markdown, heading: "Risks")
+        #expect(section?.contains("Actual.") == true)
+        #expect(section?.contains("not really") == false)
+    }
+
     @Test func blockSlicingDropsTheMarker() {
         let markdown = """
         First paragraph.
@@ -163,6 +198,19 @@ struct TransclusionAndMentionsTests {
         """
         let block = TransclusionSlicer.block(from: markdown, id: "abc")
         #expect(block == "The quoted block.")
+    }
+
+    @Test func blockSlicingIgnoresIdsInsideFences() {
+        let markdown = """
+        ```
+        sample ^abc
+        ~~~
+        other ^abc
+        ```
+
+        The quoted block. ^abc
+        """
+        #expect(TransclusionSlicer.block(from: markdown, id: "abc") == "The quoted block.")
     }
 
     // MARK: - Vault resolution and unlinked mentions
@@ -256,6 +304,113 @@ struct TransclusionAndMentionsTests {
             Design notes
             ```
             """
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = VaultScanner.markdownFiles(in: root)
+        guard let target = VaultScanner.resolve("Design notes", in: files) else {
+            Issue.record("target note not found")
+            return
+        }
+        #expect(VaultScanner.unlinkedMentions(of: target.url, in: files).isEmpty)
+    }
+
+    @Test func backlinksIgnoreFencedAndInlineWikiLinks() throws {
+        let root = try makeVault([
+            "Design notes.md": "# Design notes\n",
+            "Journal.md": """
+            See [[Design notes]] here.
+            ```
+            [[Design notes]]
+            ~~~
+            [[Design notes]]
+            ```
+            Also `[[Design notes]]` in inline code.
+            """
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = VaultScanner.markdownFiles(in: root)
+        guard let target = VaultScanner.resolve("Design notes", in: files) else {
+            Issue.record("target note not found")
+            return
+        }
+
+        let links = VaultScanner.backlinks(to: target.url, in: files)
+        #expect(links.count == 1)
+        #expect(links.first?.line == 1)
+    }
+
+    @Test func findsMentionBesideADifferentWikilink() throws {
+        let root = try makeVault([
+            "Design notes.md": "# Design notes\n",
+            "Journal.md": "Mentioned Design notes and [[Other Note]].\n"
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = VaultScanner.markdownFiles(in: root)
+        guard let target = VaultScanner.resolve("Design notes", in: files) else {
+            Issue.record("target note not found")
+            return
+        }
+
+        let mentions = VaultScanner.unlinkedMentions(of: target.url, in: files)
+        #expect(mentions.count == 1)
+        #expect(mentions.first?.line == 1)
+    }
+
+    @Test func mismatchedFenceMarkerDoesNotRevealAMention() throws {
+        let root = try makeVault([
+            "Design notes.md": "# Design notes\n",
+            "Journal.md": """
+            ```
+            ~~~
+            Design notes
+            ```
+            After the fence, Design notes
+            """
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = VaultScanner.markdownFiles(in: root)
+        guard let target = VaultScanner.resolve("Design notes", in: files) else {
+            Issue.record("target note not found")
+            return
+        }
+
+        let mentions = VaultScanner.unlinkedMentions(of: target.url, in: files)
+        #expect(mentions.count == 1)
+        #expect(mentions.first?.line == 5)
+    }
+
+    @Test func skipsMentionsInsideFrontmatter() throws {
+        let root = try makeVault([
+            "Design notes.md": "# Design notes\n",
+            "Journal.md": """
+            ---
+            title: Design notes
+            ---
+            Design notes in the body
+            """
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = VaultScanner.markdownFiles(in: root)
+        guard let target = VaultScanner.resolve("Design notes", in: files) else {
+            Issue.record("target note not found")
+            return
+        }
+
+        let mentions = VaultScanner.unlinkedMentions(of: target.url, in: files)
+        #expect(mentions.count == 1)
+        #expect(mentions.first?.line == 4)
+    }
+
+    @Test func skipsMentionWhenAnAliasAlreadyLinksTheNote() throws {
+        let root = try makeVault([
+            "Design notes.md": """
+            ---
+            aliases:
+              - the brief
+            ---
+            # Design notes
+            """,
+            "Journal.md": "Talked about Design notes via [[the brief]].\n"
         ])
         defer { try? FileManager.default.removeItem(at: root) }
         let files = VaultScanner.markdownFiles(in: root)

@@ -220,38 +220,25 @@ enum VaultScanner {
     }
 
     /// Every `[[wiki link]]` in a vault that points at `url`, with line and excerpt.
-    static func backlinks(to url: URL, in files: [VaultFile]) -> [VaultBacklink] {        let targetPath = url.standardizedFileURL.path
-        let targetFile = files.first { $0.url.standardizedFileURL.path == targetPath }
-
-        var aliases = Set<String>()
-        let title = (targetFile?.title ?? url.deletingPathExtension().lastPathComponent).lowercased()
-        if !title.isEmpty { aliases.insert(title) }
-        if let targetFile {
-            let path = strippingExtension(targetFile.relativePath).lowercased()
-            if !path.isEmpty { aliases.insert(path) }
-        }
-
-        let aliasMap = aliasMap(for: files)
+    ///
+    /// Links inside fenced code and inline code are ignored, matching heading backlinks.
+    static func backlinks(to url: URL, in files: [VaultFile]) -> [VaultBacklink] {
+        let identity = linkIdentity(for: url, in: files)
         var results: [VaultBacklink] = []
         var seen = Set<String>()
 
-        for file in files where file.url.standardizedFileURL.path != targetPath {
+        for file in files where file.url.standardizedFileURL.path != identity.path {
             guard let text = readText(file.url) else { continue }
             let lines = normalizedLines(text)
+            var fence: Character?
 
             for (index, line) in lines.enumerated() {
-                guard line.contains("[[") else { continue }
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if consumeFence(trimmed, fence: &fence) { continue }
 
-                let isTarget = wikiTargets(inText: line).contains { target in
-                    let lowered = target.lowercased()
-                    if aliases.contains(lowered) { return true }
-                    if aliases.contains(strippingExtension(lowered)) { return true }
-                    if let resolved = resolveTarget(target, aliases: aliasMap, filesByPath: [:]) {
-                        return resolved.standardizedFileURL.path == targetPath
-                    }
-                    return false
-                }
-                guard isTarget else { continue }
+                let masked = maskingInlineCode(line)
+                guard masked.contains("[[") else { continue }
+                guard lineLinksTarget(masked, identity: identity) else { continue }
 
                 let lineNumber = index + 1
                 guard seen.insert("\(file.url.path)#\(lineNumber)").inserted else { continue }
@@ -298,25 +285,27 @@ enum VaultScanner {
         }
         guard !patterns.isEmpty else { return [] }
 
+        let identity = linkIdentity(for: url, in: files)
         var results: [VaultBacklink] = []
         var seen = Set<String>()
 
         for file in files where file.url.standardizedFileURL.path != targetPath {
             guard let text = readText(file.url) else { continue }
             let lines = normalizedLines(text)
-            var inFence = false
+            let frontmatterLines = MarkdownFrontmatterParser.parse(text)?.lineCount ?? 0
+            var fence: Character?
 
             for (index, line) in lines.enumerated() {
+                guard index >= frontmatterLines else { continue }
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if fenceStart(trimmed) != nil {
-                    inFence.toggle()
+                if consumeFence(trimmed, fence: &fence) { continue }
+                // A line that already links this note stays in the backlinks pane.
+                // A link to a different note does not hide a plain-text mention.
+                let masked = maskingInlineCode(line)
+                if masked.contains("[["), lineLinksTarget(masked, identity: identity) {
                     continue
                 }
-                guard !inFence else { continue }
-                // Lines that already link the note stay in the backlinks pane.
-                guard !line.contains("[[") else { continue }
 
-                let masked = maskingInlineCode(line)
                 let range = NSRange(location: 0, length: (masked as NSString).length)
                 let matches = patterns.contains {
                     $0.firstMatch(in: masked, range: range) != nil
@@ -749,6 +738,56 @@ enum VaultScanner {
         if trimmed.hasPrefix("```") { return "`" }
         if trimmed.hasPrefix("~~~") { return "~" }
         return nil
+    }
+
+    /// Returns true when `trimmed` opens, closes, or sits inside a fence.
+    ///
+    /// A fence closes only on the same marker, so a `~~~` line inside a `` ``` ``
+    /// block does not end it.
+    private static func consumeFence(_ trimmed: String, fence: inout Character?) -> Bool {
+        if let marker = fence {
+            if trimmed.hasPrefix(String(repeating: String(marker), count: 3)) {
+                fence = nil
+            }
+            return true
+        }
+        if let marker = fenceStart(trimmed) {
+            fence = marker
+            return true
+        }
+        return false
+    }
+
+    /// Title, path, and alias map used to decide whether a wiki link names `url`.
+    private static func linkIdentity(
+        for url: URL,
+        in files: [VaultFile]
+    ) -> (path: String, aliases: Set<String>, map: [String: URL]) {
+        let targetPath = url.standardizedFileURL.path
+        let targetFile = files.first { $0.url.standardizedFileURL.path == targetPath }
+        var aliases = Set<String>()
+        let title = (targetFile?.title ?? url.deletingPathExtension().lastPathComponent).lowercased()
+        if !title.isEmpty { aliases.insert(title) }
+        if let targetFile {
+            let path = strippingExtension(targetFile.relativePath).lowercased()
+            if !path.isEmpty { aliases.insert(path) }
+        }
+        return (path: targetPath, aliases: aliases, map: aliasMap(for: files))
+    }
+
+    private static func lineLinksTarget(
+        _ line: String,
+        identity: (path: String, aliases: Set<String>, map: [String: URL])
+    ) -> Bool {
+        wikiTargets(inText: line).contains { target in
+            let lowered = target.lowercased()
+            if identity.aliases.contains(lowered) { return true }
+            if identity.aliases.contains(strippingExtension(lowered)) { return true }
+            if let resolved = resolveTarget(target, aliases: identity.map, filesByPath: [:]) {
+                return resolved.standardizedFileURL.path == identity.path
+            }
+            return false
+        }
     }
 
     private static func isATXHeading(_ trimmed: String) -> Bool {
